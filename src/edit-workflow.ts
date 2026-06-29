@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AgentActionOutput, ToolResult } from "./types.js";
 
@@ -29,7 +29,16 @@ export type EditWorkflowState = {
   checks: CheckRecord[];
 };
 
-const fileEditTools = new Set(["writeFile", "appendFile", "applyPatch"]);
+const fileEditTools = new Set([
+  "writeFile",
+  "appendFile",
+  "appendToFile",
+  "replaceText",
+  "insertText",
+  "replaceLines",
+  "insertAtLine",
+  "applyPatch"
+]);
 
 export class EditWorkflowStore {
   readonly filePath: string;
@@ -65,7 +74,7 @@ export class EditWorkflowStore {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+        await this.backupCorruptState(error);
       }
     }
 
@@ -90,17 +99,12 @@ export class EditWorkflowStore {
     }
 
     const state = await this.get();
-    const seen = new Set(state.changedFiles.map((item) => `${item.path}\0${item.tool}`));
+    const timestamp = new Date().toISOString();
     for (const path of paths) {
-      const key = `${path}\0${action.tool}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
       state.changedFiles.push({
         path,
         tool: action.tool,
-        timestamp: new Date().toISOString()
+        timestamp
       });
     }
     await this.write(state);
@@ -119,7 +123,19 @@ export class EditWorkflowStore {
 
   private async write(state: EditWorkflowState): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(state, null, 2), "utf8");
+    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8" });
+    await rename(tempPath, this.filePath);
+  }
+
+  private async backupCorruptState(error: unknown): Promise<void> {
+    const backupPath = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    try {
+      await rename(this.filePath, backupPath);
+    } catch {
+      // Best effort only; reset() below will recreate a valid workflow file.
+    }
+    void error;
   }
 }
 
@@ -132,7 +148,7 @@ export function isShellCheckCommand(command: string, suggestedChecks: string[]):
   if (suggestedChecks.some((item) => item.trim().toLowerCase() === normalized)) {
     return true;
   }
-  return /\b(typecheck|test|lint|build|benchmark|pytest|cargo test|go test)\b/i.test(command);
+  return /\b(typecheck|test|lint|build|benchmark|pytest|py_compile|cargo test|go test)\b/i.test(command);
 }
 
 export function pickCheckCommand(suggestedChecks: string[]): string | undefined {
@@ -186,7 +202,15 @@ export function extractShellCommand(input: unknown): string | undefined {
 }
 
 function extractChangedFiles(action: AgentActionOutput): string[] {
-  if (action.tool === "writeFile" || action.tool === "appendFile") {
+  if (
+    action.tool === "writeFile" ||
+    action.tool === "appendFile" ||
+    action.tool === "appendToFile" ||
+    action.tool === "replaceText" ||
+    action.tool === "insertText" ||
+    action.tool === "replaceLines" ||
+    action.tool === "insertAtLine"
+  ) {
     return extractPathInput(action.input);
   }
 

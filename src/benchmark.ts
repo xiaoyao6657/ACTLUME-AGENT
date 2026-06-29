@@ -45,7 +45,7 @@ const cases: BenchmarkCase[] = [
     id: "list-and-read-file",
     description: "Read files and list workspace content",
     async run(ctx) {
-      await writeText(resolve(ctx.cwd, "README.md"), "# Fixture\n\nhello agent\n");
+      await writeText(resolve(ctx.cwd, "README.md"), "# Fixture\n\nhello agent\nline four\n");
       const list = await runTool(ctx, "listDir", { path: "." });
       assertOk(list);
       assertIncludes(list.content, "README.md");
@@ -53,6 +53,22 @@ const cases: BenchmarkCase[] = [
       const read = await runTool(ctx, "readFile", { path: "README.md" });
       assertOk(read);
       assertIncludes(read.content, "hello agent");
+
+      const lineRange = await runTool(ctx, "readFile", { path: "README.md", startLine: 2, lineCount: 2 });
+      assertOk(lineRange);
+      assertIncludes(lineRange.content, "#lines:2-3/");
+      assertIncludes(lineRange.content, "hello agent");
+      assertNotIncludes(lineRange.content, "line four");
+
+      const offsetRange = await runTool(ctx, "readFile", { path: "README.md", offset: 3, limit: 1 });
+      assertOk(offsetRange);
+      assertIncludes(offsetRange.content, "#lines:3-3/");
+      assertIncludes(offsetRange.content, "hello agent");
+      assertNotIncludes(offsetRange.content, "line four");
+
+      await writeText(resolve(ctx.cwd, "large.txt"), Array.from({ length: 450 }, (_, index) => `line ${index + 1}`).join("\n"));
+      const largeRead = await runTool(ctx, "readFile", { path: "large.txt" });
+      assertFailed(largeRead, "READ_RANGE_REQUIRED");
     }
   },
   {
@@ -63,6 +79,10 @@ const cases: BenchmarkCase[] = [
       const result = await runTool(ctx, "searchText", { root: ".", pattern: "agentNote" });
       assertOk(result);
       assertIncludes(result.content, "agent-note.ts");
+
+      const fileResult = await runTool(ctx, "searchText", { root: "src/agent-note.ts", pattern: "benchmark" });
+      assertOk(fileResult);
+      assertIncludes(fileResult.content, "agent-note.ts");
     }
   },
   {
@@ -75,6 +95,7 @@ const cases: BenchmarkCase[] = [
       );
       await writeText(resolve(ctx.cwd, "tsconfig.json"), "{}\n");
       await writeText(resolve(ctx.cwd, "src", "main.ts"), "export const main = true;\n");
+      await writeText(resolve(ctx.cwd, ".venv", "Lib", "site-packages", "noise.py"), "print('ignore me')\n");
 
       const result = await runTool(ctx, "projectScan", { root: ".", depth: 2 });
       assertOk(result);
@@ -82,6 +103,8 @@ const cases: BenchmarkCase[] = [
       assertIncludes(result.content, "Kinds: Node.js, TypeScript");
       assertIncludes(result.content, "Suggested checks: npm run typecheck; npm test");
       assertIncludes(result.content, "src/");
+      assertNotIncludes(result.content, "site-packages");
+      assertNotIncludes(result.content, "noise.py");
 
       const summary = await readFile(resolve(ctx.memoryDir, "project-summary.md"), "utf8");
       assertIncludes(summary, "# Project Summary");
@@ -146,6 +169,74 @@ const cases: BenchmarkCase[] = [
     }
   },
   {
+    id: "text-edit-tools",
+    description: "Replace and insert exact text without hand-written patches",
+    async run(ctx) {
+      await new EditWorkflowStore(ctx.memoryDir, ctx.runId).reset();
+      const plan = await runTool(ctx, "editPlan", {
+        summary: "Edit text fixture",
+        expectedFiles: ["text-edit.txt"],
+        steps: ["Replace text", "Insert text"]
+      });
+      assertOk(plan);
+      await writeText(resolve(ctx.cwd, "text-edit.txt"), "alpha\nbeta\ngamma\n");
+
+      const replaced = await runTool(ctx, "replaceText", {
+        path: "text-edit.txt",
+        search: "beta",
+        replacement: "BETA"
+      });
+      assertOk(replaced);
+
+      const inserted = await runTool(ctx, "insertText", {
+        path: "text-edit.txt",
+        after: "BETA\n",
+        content: "inserted\n"
+      });
+      assertOk(inserted);
+
+      const lineInserted = await runTool(ctx, "insertAtLine", {
+        path: "text-edit.txt",
+        line: 2,
+        content: "line inserted\n"
+      });
+      assertOk(lineInserted);
+
+      const lineReplaced = await runTool(ctx, "replaceLines", {
+        path: "text-edit.txt",
+        startLine: 4,
+        lineCount: 1,
+        content: "GAMMA"
+      });
+      assertOk(lineReplaced);
+
+      const appended = await runTool(ctx, "appendToFile", {
+        path: "text-edit.txt",
+        content: "\nomega\n"
+      });
+      assertOk(appended);
+
+      const tail = await runTool(ctx, "readTail", { path: "text-edit.txt", lineCount: 2 });
+      assertOk(tail);
+      assertIncludes(tail.content, "omega");
+
+      const content = await readFile(resolve(ctx.cwd, "text-edit.txt"), "utf8");
+      assertIncludes(content, "alpha\nline inserted\nBETA\nGAMMA\ngamma\n\nomega");
+    }
+  },
+  {
+    id: "workflow-corrupt-json-recovery",
+    description: "Recover cleanly from a corrupt edit workflow file",
+    async run(ctx) {
+      const store = new EditWorkflowStore(ctx.memoryDir, "corrupt-json-run");
+      await writeText(resolve(ctx.memoryDir, "edit-workflow.json"), '{"runId": "corrupt-json-run", "plan": "broken"\n');
+      const state = await store.get();
+      if (state.runId !== "corrupt-json-run" || state.changedFiles.length !== 0) {
+        throw new Error("Expected corrupt workflow state to reset for the current run.");
+      }
+    }
+  },
+  {
     id: "shell-success-and-failure",
     description: "Shell returns structured success and failure",
     async run(ctx) {
@@ -155,6 +246,16 @@ const cases: BenchmarkCase[] = [
 
       const failure = await runTool(ctx, "shell", { command: "node -e \"process.exit(7)\"" });
       assertFailed(failure, "SHELL_EXIT_NONZERO");
+
+      if (process.platform === "win32") {
+        const unixTail = await runTool(ctx, "shell", { command: "node -e \"console.log('ok')\" | tail -1" });
+        assertFailed(unixTail, "SHELL_WINDOWS_INCOMPATIBLE");
+
+        const powershellPipe = await runTool(ctx, "shell", {
+          command: "node -e \"console.log('ok')\" | Select-Object -Last 1"
+        });
+        assertFailed(powershellPipe, "SHELL_WINDOWS_INCOMPATIBLE");
+      }
     }
   },
   {
@@ -450,6 +551,12 @@ function assertFailed(result: ToolResult, errorCode: string): asserts result is 
 function assertIncludes(content: string, expected: string): void {
   if (!content.includes(expected)) {
     throw new Error(`Expected content to include ${JSON.stringify(expected)}, got: ${content.slice(0, 500)}`);
+  }
+}
+
+function assertNotIncludes(content: string, expected: string): void {
+  if (content.includes(expected)) {
+    throw new Error(`Expected content not to include ${JSON.stringify(expected)}, got: ${content.slice(0, 500)}`);
   }
 }
 

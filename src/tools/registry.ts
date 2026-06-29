@@ -3,7 +3,18 @@ import { editPlanTool } from "./edit-plan.js";
 import { listDirTool, searchTextTool, treeTool } from "./explore.js";
 import { applyPatchTool } from "./patch.js";
 import { projectScanTool } from "./project-scan.js";
-import { appendFileTool, fileExistsTool, readFileTool, writeFileTool } from "./read-write.js";
+import {
+  appendFileTool,
+  appendToFileTool,
+  fileExistsTool,
+  insertTextTool,
+  insertAtLineTool,
+  readFileTool,
+  readTailTool,
+  replaceTextTool,
+  replaceLinesTool,
+  writeFileTool
+} from "./read-write.js";
 import { recallTool } from "./recall.js";
 import { shellTool } from "./shell.js";
 import { taskAddTool, taskListTool, taskUpdateTool } from "./tasks.js";
@@ -15,8 +26,14 @@ export const tools: ToolDefinition[] = [
   treeTool,
   searchTextTool,
   readFileTool,
+  readTailTool,
   writeFileTool,
   appendFileTool,
+  appendToFileTool,
+  replaceTextTool,
+  insertTextTool,
+  replaceLinesTool,
+  insertAtLineTool,
   fileExistsTool,
   applyPatchTool,
   shellTool,

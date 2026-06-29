@@ -1,9 +1,9 @@
 import type { ToolDefinition } from "./types.js";
 
 const realtimePatterns = [
-  /\b(latest|today|current|now|recent|news|score|scores|price|weather|forecast|breaking)\b/i,
+  /\b(latest|today|news|score|scores|price|weather|forecast|breaking)\b/i,
   /\bworld cup\b/i,
-  /(世界杯|比分|得分|最新|今天|今日|现在|当前|新闻|价格|天气|股价|汇率)/
+  /(世界杯|比分|得分|最新|今天|今日|新闻|价格|天气|股价|汇率)/
 ];
 
 const searchToolPatterns = [

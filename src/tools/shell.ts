@@ -30,6 +30,21 @@ export const shellTool: ToolDefinition = {
   async run(input, ctx) {
     const args = shellSchema.parse(input);
     const workdir = resolveInsideCwd(ctx.cwd, args.cwd);
+    const windowsIssue = detectWindowsIncompatibleCommand(args.command);
+    if (windowsIssue) {
+      const result: ShellResult = {
+        stdout: "",
+        stderr: windowsIssue.message,
+        exitCode: 127
+      };
+      return toolFailure({
+        content: JSON.stringify(result),
+        errorCode: "SHELL_WINDOWS_INCOMPATIBLE",
+        retryable: true,
+        metadata: { command: args.command, result, suggestion: windowsIssue.suggestion }
+      });
+    }
+
     const assessment = assessShellCommand(args.command, ctx.securityPolicy);
     if (!assessment.allowed) {
       const result: ShellResult = {
@@ -73,3 +88,25 @@ export const shellTool: ToolDefinition = {
     }
   }
 };
+
+function detectWindowsIncompatibleCommand(command: string): { message: string; suggestion: string } | undefined {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+
+  if (/(^|[|;&]\s*)tail(\s|$)/i.test(command)) {
+    return {
+      message: "The command uses Unix `tail`, but this shell runs through Windows cmd.exe.",
+      suggestion: "Run the command without tail, or use a dedicated read tool such as readTail after writing output intentionally."
+    };
+  }
+
+  if (/\b(select-object|select-string|out-file|set-content|get-content|where-object|foreach-object)\b/i.test(command)) {
+    return {
+      message: "The command uses PowerShell-only syntax, but this shell runs through Windows cmd.exe.",
+      suggestion: "Use cmd-compatible syntax, run the command without filtering, or use dedicated read/edit tools instead."
+    };
+  }
+
+  return undefined;
+}

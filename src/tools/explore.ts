@@ -5,7 +5,29 @@ import type { SearchResult, ToolDefinition } from "../types.js";
 import { toolSuccess } from "../tool-result.js";
 import { resolveInsideCwd, toProjectRelative } from "./path-utils.js";
 
-const ignoredNames = new Set(["node_modules", ".git", "dist", ".agent-memory"]);
+const ignoredNames = new Set([
+  "node_modules",
+  ".git",
+  ".hg",
+  ".svn",
+  "dist",
+  "build",
+  "coverage",
+  ".venv",
+  "venv",
+  "env",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".tox",
+  ".nox",
+  ".agent-memory",
+  ".agent-benchmark",
+  ".next",
+  ".turbo",
+  ".cache"
+]);
 const listSchema = z.object({ path: z.string().default(".") });
 const treeSchema = z.object({ path: z.string().default("."), depth: z.number().int().min(0).max(8).default(2) });
 const searchSchema = z.object({
@@ -37,7 +59,7 @@ export const listDirTool: ToolDefinition = {
 
 export const treeTool: ToolDefinition = {
   name: "tree",
-  description: "Return a compact directory tree, ignoring node_modules, .git, dist, and .agent-memory.",
+  description: "Return a compact directory tree, ignoring dependency, build, cache, VCS, virtualenv, and agent memory directories.",
   sideEffect: "read",
   parameters: {
     type: "object",
@@ -56,7 +78,7 @@ export const treeTool: ToolDefinition = {
 
 export const searchTextTool: ToolDefinition = {
   name: "searchText",
-  description: "Search text files with a JavaScript regular expression pattern.",
+  description: "Search text files under a directory, or inside a single file, with a JavaScript regular expression pattern.",
   sideEffect: "read",
   parameters: {
     type: "object",
@@ -106,6 +128,38 @@ async function searchText(cwd: string, root: string, pattern: string, maxResults
   const regex = new RegExp(pattern, "i");
   const results: SearchResult[] = [];
 
+  async function searchFile(fullPath: string): Promise<void> {
+    if (results.length >= maxResults) {
+      return;
+    }
+
+    const info = await stat(fullPath);
+    if (info.size > 1024 * 1024) {
+      return;
+    }
+
+    let content: string;
+    try {
+      content = await readFile(fullPath, "utf8");
+    } catch {
+      return;
+    }
+
+    const lines = content.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      if (regex.test(line)) {
+        results.push({
+          file: toProjectRelative(cwd, fullPath),
+          line: index + 1,
+          text: line.trim()
+        });
+        if (results.length >= maxResults) {
+          return;
+        }
+      }
+    }
+  }
+
   async function walk(dir: string): Promise<void> {
     if (results.length >= maxResults) {
       return;
@@ -123,34 +177,16 @@ async function searchText(cwd: string, root: string, pattern: string, maxResults
         continue;
       }
 
-      const info = await stat(fullPath);
-      if (info.size > 1024 * 1024) {
-        continue;
-      }
-
-      let content: string;
-      try {
-        content = await readFile(fullPath, "utf8");
-      } catch {
-        continue;
-      }
-
-      const lines = content.split(/\r?\n/);
-      for (const [index, line] of lines.entries()) {
-        if (regex.test(line)) {
-          results.push({
-            file: toProjectRelative(cwd, fullPath),
-            line: index + 1,
-            text: line.trim()
-          });
-          if (results.length >= maxResults) {
-            return;
-          }
-        }
-      }
+      await searchFile(fullPath);
     }
   }
 
-  await walk(root);
+  const rootInfo = await stat(root);
+  if (rootInfo.isDirectory()) {
+    await walk(root);
+  } else if (rootInfo.isFile()) {
+    await searchFile(root);
+  }
+
   return results;
 }

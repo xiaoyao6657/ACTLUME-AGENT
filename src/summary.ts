@@ -9,5 +9,5 @@ export function summarizeText(text: string, maxChars = 1200): string {
 }
 
 export function summarizeObservation(observation: string): string {
-  return summarizeText(observation, 1600);
+  return summarizeText(observation, 2400);
 }
