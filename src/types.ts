@@ -17,9 +17,18 @@ export type ToolContext = {
   memoryDir: string;
   readonly: boolean;
   runId: string;
+  securityPolicy: SecurityPolicy;
 };
 
 export type ToolSideEffect = "read" | "write" | "execute";
+
+export type SecurityPolicy = {
+  allowedTools?: string[];
+  deniedTools?: string[];
+  shellAllowlist?: string[];
+  shellDenylist?: string[];
+  allowHighRiskShell?: boolean;
+};
 
 export type ToolResult =
   | {

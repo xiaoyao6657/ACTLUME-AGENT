@@ -1,12 +1,26 @@
 {
   "servers": {
-    "example_fetch": {
+    "web_search": {
       "disabled": true,
       "command": "npx",
-      "args": ["-y", "some-mcp-server-package"],
+      "args": ["-y", "some-web-search-mcp-server"],
+      "env": {
+        "SEARCH_API_KEY": "your_key_here"
+      },
+      "cwd": ".",
+      "toolPrefix": "mcp_search",
+      "startupTimeoutMs": 15000,
+      "toolTimeoutMs": 60000
+    },
+    "fetch": {
+      "disabled": true,
+      "command": "npx",
+      "args": ["-y", "some-fetch-mcp-server"],
       "env": {},
       "cwd": ".",
-      "toolPrefix": "mcp_fetch"
+      "toolPrefix": "mcp_fetch",
+      "startupTimeoutMs": 15000,
+      "toolTimeoutMs": 60000
     }
   }
 }

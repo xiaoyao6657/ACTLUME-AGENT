@@ -1,16 +1,33 @@
 {
   "name": "actlume",
   "version": "0.1.0",
+  "description": "A lightweight local ReAct agent CLI for coding workflows.",
   "type": "module",
+  "license": "MIT",
   "bin": {
     "actlume": "./bin/actlume.mjs",
     "ma": "./bin/actlume.mjs"
   },
+  "files": [
+    "bin",
+    "src",
+    ".actlume/config.example.json",
+    ".agent-mcp.example.json",
+    ".agent-security.example.json",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "tsconfig.json"
+  ],
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
+    "test": "tsx --test src/model-adapter.test.ts src/external-info.test.ts src/cli-experience.test.ts src/agent-output.test.ts src/mcp-client.test.ts src/cli-integration.test.ts",
     "typecheck": "tsc --noEmit",
-    "benchmark": "tsx src/benchmark.ts"
+    "benchmark": "tsx src/benchmark.ts",
+    "ci": "npm run typecheck && npm run test && npm run benchmark",
+    "release:dry": "npm pack --dry-run",
+    "prepack": "npm run ci"
   },
   "engines": {
     "node": ">=22.0.0"

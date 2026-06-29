@@ -2,7 +2,12 @@ import "dotenv/config";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { runAgent } from "./agent.js";
+import { consumeMultilineInput, emptyMultilineState, highlightDiff, renderMarkdown } from "./cli-experience.js";
+import { loadAppConfig } from "./config.js";
 import { EditWorkflowStore } from "./edit-workflow.js";
+import { loadMcpToolManager } from "./mcp-client.js";
+import { defaultSecurityPolicy } from "./security.js";
 import { runRegisteredTool } from "./tool-scheduler.js";
 import type { ToolContext, ToolResult } from "./types.js";
 import { tools } from "./tools/registry.js";
@@ -153,6 +158,167 @@ const cases: BenchmarkCase[] = [
     }
   },
   {
+    id: "security-policy",
+    description: "Enforce tool permissions and shell command policy",
+    async run(ctx) {
+      const deniedToolCtx: ToolContext = {
+        ...ctx,
+        securityPolicy: { ...ctx.securityPolicy, deniedTools: ["shell"] }
+      };
+      const deniedTool = await runTool(deniedToolCtx, "shell", { command: "node -e \"console.log('no')\"" });
+      assertFailed(deniedTool, "TOOL_DENIED");
+
+      const allowlistCtx: ToolContext = {
+        ...ctx,
+        securityPolicy: { ...ctx.securityPolicy, shellAllowlist: [String.raw`^node\s+-e`] }
+      };
+      const notAllowed = await runTool(allowlistCtx, "shell", { command: "npm run typecheck" });
+      assertFailed(notAllowed, "SHELL_NOT_ALLOWED");
+
+      const highRisk = await runTool(ctx, "shell", { command: "git reset --hard HEAD" });
+      assertFailed(highRisk, "SHELL_HIGH_RISK");
+    }
+  },
+  {
+    id: "config-precedence",
+    description: "Resolve config precedence across env, user, project, and CLI",
+    async run(ctx) {
+      const userHome = resolve(ctx.cwd, "fake-home");
+      const projectDir = resolve(ctx.cwd, "config-project");
+      await writeText(
+        resolve(userHome, ".actlume", "config.json"),
+        JSON.stringify({ model: "user-model", maxSteps: 3, readonly: true, workspace: projectDir }, null, 2)
+      );
+      await writeText(
+        resolve(projectDir, ".actlume", "config.json"),
+        JSON.stringify({ model: "project-model", maxSteps: 5, memoryDir: ".custom-memory" }, null, 2)
+      );
+
+      const oldActlumeHome = process.env.ACTLUME_HOME;
+      const oldOpenAiModel = process.env.OPENAI_MODEL;
+      const oldMaxSteps = process.env.AGENT_MAX_STEPS;
+      process.env.ACTLUME_HOME = userHome;
+      process.env.OPENAI_MODEL = "env-model";
+      process.env.AGENT_MAX_STEPS = "2";
+      try {
+        const config = await loadAppConfig({ model: "cli-model" }, ctx.cwd);
+        if (config.workspace !== projectDir) {
+          throw new Error(`Expected workspace ${projectDir}, got ${config.workspace}`);
+        }
+        if (config.memoryDir !== resolve(projectDir, ".custom-memory")) {
+          throw new Error(`Expected project memoryDir, got ${config.memoryDir}`);
+        }
+        if (config.model !== "cli-model") {
+          throw new Error(`Expected CLI model, got ${config.model}`);
+        }
+        if (config.maxSteps !== 5) {
+          throw new Error(`Expected project maxSteps 5, got ${config.maxSteps}`);
+        }
+        if (config.readonly !== true) {
+          throw new Error("Expected user readonly true.");
+        }
+      } finally {
+        restoreEnv("ACTLUME_HOME", oldActlumeHome);
+        restoreEnv("OPENAI_MODEL", oldOpenAiModel);
+        restoreEnv("AGENT_MAX_STEPS", oldMaxSteps);
+      }
+    }
+  },
+  {
+    id: "cli-experience-helpers",
+    description: "Handle multiline input and terminal rendering helpers",
+    async run(_ctx) {
+      const state = emptyMultilineState();
+      const first = consumeMultilineInput(state, "first line\\");
+      if (first.ready) {
+        throw new Error("Expected multiline input to wait for continuation.");
+      }
+      const second = consumeMultilineInput(state, "second line");
+      if (!second.ready || second.text !== "first line\nsecond line") {
+        throw new Error(`Unexpected multiline result: ${JSON.stringify(second)}`);
+      }
+
+      const diff = highlightDiff("+added\n-removed\n unchanged");
+      assertIncludes(diff, "added");
+      assertIncludes(diff, "removed");
+
+      const markdown = renderMarkdown("# Title\n- item");
+      assertIncludes(markdown, "Title");
+      assertIncludes(markdown, "item");
+    }
+  },
+  {
+    id: "mcp-status-and-realtime-guard",
+    description: "Report MCP status and block realtime tasks without search tools",
+    async run(ctx) {
+      const mcpConfigPath = resolve(ctx.cwd, "mcp-status.json");
+      await writeText(
+        mcpConfigPath,
+        JSON.stringify(
+          {
+            servers: {
+              disabled_search: {
+                disabled: true,
+                command: "npx",
+                args: ["-y", "fake-search-server"],
+                toolPrefix: "mcp_search",
+                startupTimeoutMs: 1000,
+                toolTimeoutMs: 1000
+              }
+            }
+          },
+          null,
+          2
+        )
+      );
+
+      const manager = await loadMcpToolManager({
+        workspace: ctx.cwd,
+        projectRoot: ctx.cwd,
+        configPath: mcpConfigPath
+      });
+      if (manager.statuses[0]?.status !== "disabled") {
+        throw new Error("Expected disabled MCP server status.");
+      }
+
+      const result = await runAgent({
+        userTask: "查询今天世界杯最新比分",
+        cwd: ctx.cwd,
+        memoryDir: ctx.memoryDir,
+        runId: "realtime-guard",
+        tools,
+        securityPolicy: ctx.securityPolicy
+      });
+      if (result.status !== "failed") {
+        throw new Error(`Expected realtime guard failure, got ${result.status}`);
+      }
+      assertIncludes(result.answer, "MCP");
+      assertIncludes(result.answer, "搜索");
+    }
+  },
+  {
+    id: "patch-path-safety",
+    description: "Block patches that target paths outside the workspace",
+    async run(ctx) {
+      const plan = await runTool(ctx, "editPlan", {
+        summary: "Attempt unsafe patch",
+        expectedFiles: ["../outside.txt"],
+        steps: ["Apply patch"]
+      });
+      assertOk(plan);
+      const patch = [
+        "diff --git a/../outside.txt b/../outside.txt",
+        "--- a/../outside.txt",
+        "+++ b/../outside.txt",
+        "@@ -0,0 +1 @@",
+        "+unsafe",
+        ""
+      ].join("\n");
+      const result = await runTool(ctx, "applyPatch", { patch });
+      assertFailed(result, "PATCH_PATH_BLOCKED");
+    }
+  },
+  {
     id: "task-tracker",
     description: "Add, update, and list tracked tasks",
     async run(ctx) {
@@ -186,7 +352,8 @@ async function main(): Promise<void> {
     cwd: benchmarkRoot,
     memoryDir: benchmarkMemoryDir,
     readonly: false,
-    runId: "benchmark"
+    runId: "benchmark",
+    securityPolicy: defaultSecurityPolicy
   };
 
   const results: BenchmarkCaseResult[] = [];
@@ -306,6 +473,14 @@ async function writeText(path: string, content: string): Promise<void> {
 
 function elapsed(started: number): number {
   return Math.round(performance.now() - started);
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }
 
 async function runCommand(command: string, args: string[], cwd: string): Promise<void> {

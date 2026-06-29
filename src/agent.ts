@@ -12,9 +12,12 @@ import {
   requiresEditPlan,
   type EditWorkflowState
 } from "./edit-workflow.js";
+import { hasMcpSearchTool, missingSearchToolMessage, requiresRealtimeExternalInfo } from "./external-info.js";
 import { callLLM } from "./llm.js";
+import { inferModelProfile, modelProfileForPrompt } from "./model-adapter.js";
 import { formatProjectScan, scanProjectWithCache } from "./project-scan.js";
 import { RunLogger } from "./run-log.js";
+import { defaultSecurityPolicy } from "./security.js";
 import { summarizeObservation } from "./summary.js";
 import { formatToolResultForObservation, toolFailure } from "./tool-result.js";
 import { buildToolConfirmationRequest } from "./tool-preview.js";
@@ -27,7 +30,8 @@ import type {
   ToolConfirmationRequest,
   ToolContext,
   ToolDefinition,
-  ToolResult
+  ToolResult,
+  SecurityPolicy
 } from "./types.js";
 import { getToolDescriptions, tools as localTools } from "./tools/registry.js";
 
@@ -39,8 +43,11 @@ export type RunAgentOptions = {
   readonly?: boolean;
   runId?: string;
   model?: string;
+  apiKey?: string;
+  baseURL?: string;
   tools?: ToolDefinition[];
   autoConfirm?: boolean;
+  securityPolicy?: SecurityPolicy;
   confirmToolCall?: (request: ToolConfirmationRequest) => Promise<boolean>;
 };
 
@@ -77,8 +84,15 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   const memoryDir = options.memoryDir ?? process.env.AGENT_MEMORY_DIR ?? ".agent-memory";
   const maxSteps = options.maxSteps ?? Number(process.env.AGENT_MAX_STEPS ?? 10);
   const runId = options.runId ?? crypto.randomUUID();
-  const ctx: ToolContext = { cwd, memoryDir, readonly: options.readonly ?? false, runId };
+  const ctx: ToolContext = {
+    cwd,
+    memoryDir,
+    readonly: options.readonly ?? false,
+    runId,
+    securityPolicy: options.securityPolicy ?? defaultSecurityPolicy
+  };
   const availableTools = options.tools ?? localTools;
+  const modelProfile = inferModelProfile({ model: options.model, baseURL: options.baseURL });
   const actionStore = new ActionStore(memoryDir);
   const logger = new RunLogger(memoryDir, runId);
   const editWorkflow = new EditWorkflowStore(memoryDir, runId);
@@ -99,16 +113,31 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
       maxSteps,
       readonly: ctx.readonly,
       model: options.model,
+      modelProfile,
       projectContext: projectContext.text
     }
   });
 
+  if (requiresRealtimeExternalInfo(options.userTask) && !hasMcpSearchTool(availableTools)) {
+    const answer = missingSearchToolMessage(options.userTask);
+    await logger.write({ event: "external_info_blocked", data: { answer, availableTools: availableTools.map((tool) => tool.name) } });
+    await logger.write({ event: "run_end", data: { status: "failed", answer } });
+    return {
+      answer,
+      status: "failed",
+      runId: logger.runId,
+      logPath: logger.filePath,
+      stepsUsed,
+      toolCalls
+    };
+  }
+
   for (let step = 1; step <= maxSteps; step += 1) {
     stepsUsed = step;
-    const prompt = buildPrompt(options.userTask, history, availableTools, projectContext.text);
+    const prompt = buildPrompt(options.userTask, history, availableTools, projectContext.text, modelProfileForPrompt(modelProfile));
     await logger.write({ event: "turn_start", step, data: { prompt } });
     console.log(`\n[turn ${step}] LLM`);
-    const raw = await callLLM(prompt, { model: options.model });
+    const raw = await callLLM(prompt, { model: options.model, apiKey: options.apiKey, baseURL: options.baseURL });
     await logger.write({ event: "llm_response", step, data: { raw } });
     const parsed = parseAgentOutput(raw);
 
@@ -453,7 +482,8 @@ function buildPrompt(
   userTask: string,
   history: AgentHistoryItem[],
   availableTools: ToolDefinition[],
-  projectContext: string
+  projectContext: string,
+  modelContext: string
 ): string {
   const compactHistory = compactHistoryForPrompt(history);
   const historyText =
@@ -471,6 +501,7 @@ ${summarizeObservation(item.observation)}`
 
   const parts = [
     `User task:\n${userTask}`,
+    `Model context:\n${modelContext}`,
     `Project context:\n${projectContext}`,
     `Available tools:\n${getToolDescriptions(availableTools)}`,
     `History:\n${historyText}`
@@ -491,6 +522,7 @@ Protocol:
 - After edits, the CLI may automatically run a suggested project check and ask you to repair once if it fails.
 - If a write or execute tool is rejected by confirmation, explain what would be needed or choose a read-only alternative.
 - After edits, run a suitable check command when available.
+- For realtime, latest, news, scores, prices, weather, or web-page questions, use an MCP search/browser/fetch tool first. If none is available, say that network search is not configured.
 - To call a tool, output:
 {"type":"action","thought":"why this tool is needed","tool":"toolName","input":{}}
 - To finish, output:
@@ -499,7 +531,7 @@ Protocol:
 `;
 }
 
-function parseAgentOutput(raw: string): { ok: true; value: AgentOutput } | { ok: false; error: string } {
+export function parseAgentOutput(raw: string): { ok: true; value: AgentOutput } | { ok: false; error: string } {
   try {
     const clean = stripJsonFence(raw.trim());
     const parsed = JSON.parse(clean) as unknown;

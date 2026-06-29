@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { diagnoseLlmError, extractAssistantText, inferModelProfile } from "./model-adapter.js";
 
 export type LlmOptions = {
   model?: string;
@@ -12,47 +13,55 @@ export async function callLLM(prompt: string, options: LlmOptions = {}): Promise
     throw new Error("OPENAI_API_KEY is not set. Copy .env.example to .env and configure your API key.");
   }
 
+  const profile = inferModelProfile({ model: options.model, baseURL: options.baseURL });
   const client = new OpenAI({
     apiKey,
-    baseURL: options.baseURL ?? process.env.OPENAI_BASE_URL
+    baseURL: profile.baseURL
   });
 
-  const completion = await client.chat.completions.create({
-    model: options.model ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
-    temperature: 0.2,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a minimal ReAct agent. Always respond with strict JSON only. Use either {\"type\":\"action\",\"thought\":\"...\",\"tool\":\"...\",\"input\":{...}} or {\"type\":\"final\",\"answer\":\"...\"}."
-      },
-      {
-        role: "user",
-        content: prompt
-      }
-    ]
-  });
+  let completion;
+  try {
+    completion = await client.chat.completions.create({
+      model: profile.model,
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a minimal ReAct agent. Always respond with strict JSON only. Use either {\"type\":\"action\",\"thought\":\"...\",\"tool\":\"...\",\"input\":{...}} or {\"type\":\"final\",\"answer\":\"...\"}."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ]
+    });
+  } catch (error) {
+    throw new Error(diagnoseLlmError(error, { model: profile.model, baseURL: profile.baseURL }));
+  }
 
   if (!Array.isArray(completion.choices) || completion.choices.length === 0) {
     throw new Error(
       [
         "LLM response did not include chat completion choices.",
-        `Model: ${options.model ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini"}`,
-        `Base URL: ${options.baseURL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"}`,
+        `Model: ${profile.model}`,
+        `Base URL: ${profile.baseURL}`,
         `Raw response: ${JSON.stringify(completion).slice(0, 2000)}`
       ].join("\n")
     );
   }
 
   const message = completion.choices[0]?.message;
-  const content = message?.content;
+  const content = extractAssistantText(message, profile);
   if (!content) {
-    const reasoningContent = (message as { reasoning_content?: unknown } | undefined)?.reasoning_content;
-    if (typeof reasoningContent === "string" && reasoningContent.trim()) {
-      return reasoningContent;
-    }
-
-    throw new Error(`LLM response was empty. Raw response: ${JSON.stringify(completion).slice(0, 2000)}`);
+    throw new Error(
+      [
+        "LLM response was empty.",
+        `Model: ${profile.model}`,
+        `Base URL: ${profile.baseURL}`,
+        `Raw response: ${JSON.stringify(completion).slice(0, 2000)}`
+      ].join("\n")
+    );
   }
 
   return content;

@@ -3,6 +3,9 @@ dist/
 .env
 .agent-mcp.json
 .agent-mcp.local.json
+.agent-security.json
+.actlume/config.json
+.actlume/config.local.json
 .agent-memory/
 .agent-benchmark/
 npm-debug.log*

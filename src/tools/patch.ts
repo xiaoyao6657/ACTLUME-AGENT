@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isAbsolute, normalize } from "node:path";
 import { z } from "zod";
 import { toolFailure, toolSuccess } from "../tool-result.js";
 import type { ToolDefinition } from "../types.js";
@@ -23,6 +24,16 @@ export const applyPatchTool: ToolDefinition = {
   },
   async run(input, ctx) {
     const args = applyPatchSchema.parse(input);
+    const pathValidation = validatePatchPaths(args.patch);
+    if (!pathValidation.ok) {
+      return toolFailure({
+        content: pathValidation.message,
+        errorCode: "PATCH_PATH_BLOCKED",
+        retryable: false,
+        metadata: pathValidation
+      });
+    }
+
     const check = await runGitApply(ctx.cwd, ["apply", "--check", "--whitespace=nowarn", "-"], args.patch);
     if (check.exitCode !== 0) {
       return toolFailure({
@@ -50,6 +61,57 @@ export const applyPatchTool: ToolDefinition = {
     return toolSuccess("Patch applied successfully.", applied);
   }
 };
+
+function validatePatchPaths(patch: string): { ok: true } | { ok: false; message: string; path: string } {
+  for (const line of patch.split(/\r?\n/)) {
+    const path = extractPatchPath(line);
+    if (!path || path === "/dev/null") {
+      continue;
+    }
+
+    if (isUnsafePatchPath(path)) {
+      return {
+        ok: false,
+        message: `Patch path escapes workspace or is absolute: ${path}`,
+        path
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function extractPatchPath(line: string): string | undefined {
+  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
+    const raw = line.slice(4).trim().split(/\s+/)[0];
+    if (raw.startsWith("a/") || raw.startsWith("b/")) {
+      return raw.slice(2);
+    }
+    return raw;
+  }
+
+  if (line.startsWith("diff --git ")) {
+    const [, , left, right] = line.split(/\s+/);
+    const raw = right ?? left;
+    if (!raw) {
+      return undefined;
+    }
+    return raw.startsWith("b/") || raw.startsWith("a/") ? raw.slice(2) : raw;
+  }
+
+  return undefined;
+}
+
+function isUnsafePatchPath(path: string): boolean {
+  if (path === "/dev/null") {
+    return false;
+  }
+  if (isAbsolute(path) || /^[A-Za-z]:[\\/]/.test(path)) {
+    return true;
+  }
+  const normalized = normalize(path).replaceAll("\\", "/");
+  return normalized === ".." || normalized.startsWith("../") || normalized.includes("/../");
+}
 
 async function runGitApply(
   cwd: string,

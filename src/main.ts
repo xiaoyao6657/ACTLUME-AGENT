@@ -1,15 +1,30 @@
 import { config } from "dotenv";
-import { readdir } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { access, copyFile, mkdir, readdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { createInterface as createQuestionInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import { ActionStore } from "./action-store.js";
+import {
+  appendHistory,
+  consumeMultilineInput,
+  emptyMultilineState,
+  errorText,
+  highlightDiff,
+  label,
+  loadHistory,
+  renderMarkdown,
+  success,
+  warning
+} from "./cli-experience.js";
+import { loadAppConfig, type AppConfig } from "./config.js";
 import { runAgent, type RunAgentResult } from "./agent.js";
 import { loadMcpToolManager, type McpToolManager } from "./mcp-client.js";
+import { scanProjectWithCache } from "./project-scan.js";
+import { loadSecurityPolicy } from "./security.js";
 import { finishSession, startSession } from "./session.js";
-import type { ToolConfirmationRequest, ToolDefinition } from "./types.js";
+import type { SecurityPolicy, ToolConfirmationRequest, ToolDefinition } from "./types.js";
 import { tools as localTools } from "./tools/registry.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,7 +36,11 @@ type CliState = {
   readonly: boolean;
   maxSteps: number;
   model: string;
+  baseURL?: string;
+  apiKey?: string;
   yes: boolean;
+  config: AppConfig;
+  securityPolicy: SecurityPolicy;
   mcpConfigPath?: string;
   mcpManager: McpToolManager;
   tools: ToolDefinition[];
@@ -34,21 +53,27 @@ async function main(): Promise<void> {
     return;
   }
 
-  const workspace = resolve(cliArgs.workspace ?? process.env.AGENT_WORKSPACE ?? process.cwd());
-  const memoryDir = resolveMemoryDir(workspace, process.env.AGENT_MEMORY_DIR ?? ".agent-memory");
+  const appConfig = await loadAppConfig(cliArgs);
+  const workspace = appConfig.workspace;
+  const memoryDir = appConfig.memoryDir;
+  const securityPolicy = await loadSecurityPolicy(workspace);
   const mcpManager = await loadMcpToolManager({
     workspace,
     projectRoot,
-    configPath: cliArgs.mcpConfigPath
+    configPath: appConfig.mcpConfigPath
   });
   const state: CliState = {
     workspace,
     memoryDir,
-    readonly: cliArgs.readonly ?? parseBooleanEnv(process.env.AGENT_READONLY),
-    maxSteps: cliArgs.maxSteps ?? Number(process.env.AGENT_MAX_STEPS ?? 10),
-    model: cliArgs.model ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
-    yes: cliArgs.yes ?? false,
-    mcpConfigPath: cliArgs.mcpConfigPath,
+    readonly: appConfig.readonly,
+    maxSteps: appConfig.maxSteps,
+    model: appConfig.model,
+    baseURL: appConfig.baseURL,
+    apiKey: appConfig.apiKey,
+    yes: appConfig.yes,
+    config: appConfig,
+    securityPolicy,
+    mcpConfigPath: appConfig.mcpConfigPath,
     mcpManager,
     tools: [...localTools, ...mcpManager.getTools()]
   };
@@ -175,18 +200,6 @@ function parseCliArgs(argv: string[]): {
   };
 }
 
-function resolveMemoryDir(workspace: string, memoryDir: string): string {
-  if (isAbsolute(memoryDir)) {
-    return memoryDir;
-  }
-
-  return resolve(workspace, memoryDir);
-}
-
-function parseBooleanEnv(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes((value ?? "").toLowerCase());
-}
-
 function parsePositiveInteger(value: string, flagName: string): number {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -196,10 +209,18 @@ function parsePositiveInteger(value: string, flagName: string): number {
 }
 
 async function runInteractiveCli(state: CliState): Promise<void> {
-  const rl = createInterface({ input, output });
+  const rl = createInterface({
+    input,
+    output,
+    historySize: 200,
+    removeHistoryDuplicates: true
+  });
   const prompt = "\nactlume> ";
+  const multiline = emptyMultilineState();
+  const history = await loadHistory();
+  setReadlineHistory(rl, history);
 
-  console.log("actlume interactive CLI");
+  console.log(success("actlume interactive CLI"));
   printStatus(state);
   console.log("Type /help for commands, /exit to quit.");
   if (input.isTTY) {
@@ -218,11 +239,21 @@ async function runInteractiveCli(state: CliState): Promise<void> {
 
   try {
     for await (const rawLine of rl) {
-      const line = rawLine.trim();
+      const multilineResult = consumeMultilineInput(multiline, rawLine);
+      if (!multilineResult.ready) {
+        rl.setPrompt(multilineResult.prompt);
+        promptAgain();
+        continue;
+      }
+
+      rl.setPrompt(prompt);
+      const line = multilineResult.text.trim();
       if (!line) {
         promptAgain();
         continue;
       }
+
+      await appendHistory(line);
 
       if (line === "/exit" || line === "/quit") {
         return;
@@ -230,6 +261,30 @@ async function runInteractiveCli(state: CliState): Promise<void> {
 
       if (line === "/help") {
         printHelp();
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/clear") {
+        console.clear();
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/init") {
+        await initWorkspace(state);
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/doctor") {
+        await printDoctor(state);
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/compact") {
+        await compactWorkspaceContext(state);
         promptAgain();
         continue;
       }
@@ -262,7 +317,16 @@ async function runInteractiveCli(state: CliState): Promise<void> {
 
       if (line.startsWith("/cwd ")) {
         state.workspace = resolve(line.slice("/cwd ".length).trim());
-        state.memoryDir = resolveMemoryDir(state.workspace, process.env.AGENT_MEMORY_DIR ?? ".agent-memory");
+        state.config = await loadAppConfig({ ...state.config, workspace: state.workspace });
+        state.memoryDir = state.config.memoryDir;
+        state.readonly = state.config.readonly;
+        state.maxSteps = state.config.maxSteps;
+        state.model = state.config.model;
+        state.baseURL = state.config.baseURL;
+        state.apiKey = state.config.apiKey;
+        state.yes = state.config.yes;
+        state.mcpConfigPath = state.config.mcpConfigPath;
+        state.securityPolicy = await loadSecurityPolicy(state.workspace);
         await reloadMcpTools(state);
         console.log(`workspace: ${state.workspace}`);
         promptAgain();
@@ -283,6 +347,12 @@ async function runInteractiveCli(state: CliState): Promise<void> {
 
       if (line === "/mcp") {
         printMcpStatus(state);
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/mcp tools") {
+        printMcpTools(state);
         promptAgain();
         continue;
       }
@@ -373,14 +443,17 @@ async function runSingleTask(
       maxSteps: state.maxSteps,
       readonly: state.readonly,
       model: state.model,
+      apiKey: state.apiKey,
+      baseURL: state.baseURL,
       runId: session.id,
       tools: state.tools,
       autoConfirm: state.yes,
+      securityPolicy: state.securityPolicy,
       confirmToolCall: confirm ?? ((request) => confirmToolCall(request))
     });
     await finishSession(state.memoryDir, session, result.status === "failed" ? "failed" : "completed");
-    console.log("\n[final answer]");
-    console.log(result.answer);
+    console.log(label("\n[final answer]"));
+    console.log(renderMarkdown(result.answer));
     printRunSummary(result);
   } catch (error) {
     await finishSession(state.memoryDir, session, "failed");
@@ -390,14 +463,18 @@ async function runSingleTask(
 }
 
 function printStatus(state: CliState): void {
-  console.log(`workspace: ${state.workspace}`);
-  console.log(`memoryDir: ${state.memoryDir}`);
-  console.log(`model: ${state.model}`);
-  console.log(`maxSteps: ${state.maxSteps}`);
-  console.log(`readonly: ${state.readonly}`);
-  console.log(`yes: ${state.yes}`);
-  console.log(`tools: ${state.tools.length} (${localTools.length} local, ${state.mcpManager.getTools().length} mcp)`);
-  console.log(`mcpConfig: ${state.mcpManager.configPath ?? "<none>"}`);
+  console.log(`${label("workspace")}: ${state.workspace}`);
+  console.log(`${label("memoryDir")}: ${state.memoryDir}`);
+  console.log(`${label("model")}: ${state.model}`);
+  console.log(`${label("baseURL")}: ${state.baseURL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"}`);
+  console.log(`${label("maxSteps")}: ${state.maxSteps}`);
+  console.log(`${label("readonly")}: ${state.readonly}`);
+  console.log(`${label("yes")}: ${state.yes}`);
+  console.log(`${label("security")}: deniedTools=${state.securityPolicy.deniedTools?.length ?? 0}, allowedTools=${state.securityPolicy.allowedTools?.length ?? 0}, shellAllowlist=${state.securityPolicy.shellAllowlist?.length ?? 0}, shellDenylist=${state.securityPolicy.shellDenylist?.length ?? 0}, allowHighRiskShell=${state.securityPolicy.allowHighRiskShell === true}`);
+  console.log(`${label("tools")}: ${state.tools.length} (${localTools.length} local, ${state.mcpManager.getTools().length} mcp)`);
+  console.log(`${label("mcpConfig")}: ${state.mcpManager.configPath ?? "<none>"}`);
+  console.log(`${label("userConfig")}: ${state.config.sources.userConfigLoaded ? state.config.sources.userConfigPath : "<not loaded>"}`);
+  console.log(`${label("projectConfig")}: ${state.config.sources.projectConfigLoaded ? state.config.sources.projectConfigPath : "<not loaded>"}`);
 }
 
 function printTools(availableTools: ToolDefinition[]): void {
@@ -408,11 +485,32 @@ function printTools(availableTools: ToolDefinition[]): void {
 
 function printMcpStatus(state: CliState): void {
   console.log(`config: ${state.mcpManager.configPath ?? "<none>"}`);
-  console.log(`servers: ${state.mcpManager.servers.length}`);
-  for (const server of state.mcpManager.servers) {
-    console.log(`- ${server.name}: ${server.tools.length} tools`);
+  console.log(`servers: ${state.mcpManager.statuses.length}`);
+  for (const status of state.mcpManager.statuses) {
+    if (status.status === "connected") {
+      console.log(`- ${status.name}: connected, ${status.toolCount} tools, timeout ${status.toolTimeoutMs}ms`);
+    } else {
+      console.log(`- ${status.name}: ${status.status}${status.message ? ` - ${status.message}` : ""}`);
+    }
   }
   printMcpWarnings(state.mcpManager);
+}
+
+function printMcpTools(state: CliState): void {
+  const servers = state.mcpManager.servers;
+  if (servers.length === 0) {
+    console.log("No MCP tools loaded.");
+    return;
+  }
+
+  for (const server of servers) {
+    console.log(`server: ${server.name}`);
+    for (const tool of server.tools) {
+      console.log(`- ${tool.name} [${tool.sideEffect}]`);
+      console.log(`  ${tool.description}`);
+      console.log(`  schema: ${JSON.stringify(tool.parameters)}`);
+    }
+  }
 }
 
 function printMcpWarnings(manager: McpToolManager): void {
@@ -454,7 +552,7 @@ async function printMemory(memoryDir: string): Promise<void> {
 }
 
 function printRunSummary(result: RunAgentResult): void {
-  console.log("\n[run summary]");
+  console.log(label("\n[run summary]"));
   console.log(`status: ${result.status}`);
   console.log(`steps: ${result.stepsUsed}`);
   console.log(`toolCalls: ${result.toolCalls}`);
@@ -494,16 +592,79 @@ async function confirmToolCallWithReadline(request: ToolConfirmationRequest, rl:
 }
 
 function printConfirmationRequest(request: ToolConfirmationRequest): void {
-  console.log("\n[confirmation required]");
+  console.log(warning("\n[confirmation required]"));
   console.log(`tool: ${request.toolName}`);
   console.log(`sideEffect: ${request.sideEffect}`);
   if (request.preview) {
     console.log("[preview]");
-    console.log(request.preview);
+    console.log(highlightDiff(request.preview));
   } else {
     console.log("[input]");
     console.log(JSON.stringify(request.input, null, 2));
   }
+}
+
+async function initWorkspace(state: CliState): Promise<void> {
+  await mkdir(resolve(state.workspace, ".actlume"), { recursive: true });
+  await copyIfMissing(resolve(projectRoot, ".actlume", "config.example.json"), resolve(state.workspace, ".actlume", "config.json"));
+  await copyIfMissing(resolve(projectRoot, ".agent-mcp.example.json"), resolve(state.workspace, ".agent-mcp.json"));
+  await copyIfMissing(resolve(projectRoot, ".agent-security.example.json"), resolve(state.workspace, ".agent-security.json"));
+  console.log(success("Initialized workspace config files."));
+  console.log(`- ${resolve(state.workspace, ".actlume", "config.json")}`);
+  console.log(`- ${resolve(state.workspace, ".agent-mcp.json")}`);
+  console.log(`- ${resolve(state.workspace, ".agent-security.json")}`);
+}
+
+async function printDoctor(state: CliState): Promise<void> {
+  console.log(label("doctor"));
+  console.log(`${check(Number(process.versions.node.split(".")[0]) >= 22)} Node.js ${process.version}`);
+  console.log(`${check(Boolean(state.apiKey ?? process.env.OPENAI_API_KEY))} API key configured`);
+  console.log(`${check(Boolean(state.model))} model: ${state.model}`);
+  console.log(`${check(await exists(state.workspace))} workspace: ${state.workspace}`);
+  console.log(`${check(state.mcpManager.warnings.length === 0)} MCP warnings: ${state.mcpManager.warnings.length}`);
+  for (const item of state.mcpManager.warnings) {
+    console.log(`  ${warning(item)}`);
+  }
+  console.log(`${check(true)} memoryDir: ${state.memoryDir}`);
+  console.log(`${check(true)} tools: ${state.tools.length}`);
+}
+
+async function compactWorkspaceContext(state: CliState): Promise<void> {
+  const result = await scanProjectWithCache(state.workspace, {
+    maxDepth: 3,
+    maxFiles: 250,
+    memoryDir: state.memoryDir,
+    forceRefresh: true
+  });
+  console.log(success("Compacted project context."));
+  console.log(`summary: ${result.summaryPath ?? "<not persisted>"}`);
+  console.log(`cache: ${result.cachePath ?? "<not persisted>"}`);
+}
+
+async function copyIfMissing(source: string, target: string): Promise<void> {
+  if (await exists(target)) {
+    console.log(warning(`Skipped existing file: ${target}`));
+    return;
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await copyFile(source, target);
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function check(ok: boolean): string {
+  return ok ? success("OK") : errorText("FAIL");
+}
+
+function setReadlineHistory(rl: Interface, history: string[]): void {
+  (rl as Interface & { history?: string[] }).history = history;
 }
 
 function isYes(answer: string): boolean {
@@ -527,8 +688,13 @@ Interactive commands:
   /status        Print workspace, model, readonly, and memory settings
   /tools         List available tools
   /mcp           Show MCP status
+  /mcp tools     List MCP tools and schemas
   /mcp reload    Reload MCP servers from config
   /memory        Show memory counts
+  /init          Create config examples in the current workspace
+  /doctor        Check local environment and configuration
+  /compact       Refresh project summary and index cache
+  /clear         Clear the terminal
   /model         Print current model
   /model <name>  Switch model
   /max-steps     Print max steps

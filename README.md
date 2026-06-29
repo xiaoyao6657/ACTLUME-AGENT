@@ -9,10 +9,14 @@
 - OpenAI-compatible Chat Completions：支持 OpenAI、DeepSeek 等兼容接口。
 - 本地工具：项目扫描、编辑计划、目录树、文本搜索、文件读写、patch、受控 shell、历史回忆、任务追踪。
 - 交互式 CLI：支持一次性任务和持续会话。
-- 安全控制：写入、patch、shell 和非只读 MCP 工具默认需要确认；支持 `--readonly` 和 `--yes`。
+- CLI 体验：支持命令历史、多行输入、彩色输出、diff 高亮和常用辅助命令。
+- 安全控制：写入、patch、shell 和非只读 MCP 工具默认需要确认；支持 `--readonly`、`--yes` 和 `.agent-security.json`。
+- 配置系统：支持 CLI 参数、项目配置、用户配置、环境变量和默认值的优先级合并。
 - MCP 扩展：可通过 `.agent-mcp.json` 接入搜索、浏览器、数据库、GitHub 等外部工具。
 - 运行日志与记忆：工具调用、任务状态和每次 run 会写入 `.agent-memory`。
 - 代码修改工作流：写入前需要 `editPlan`，写入后自动记录变更摘要，并可自动运行建议检查命令。
+- 模型适配和诊断：识别 OpenAI、DeepSeek、Ollama 和通用 OpenAI-compatible 服务，提供更清晰的认证、网关、限流和协议错误提示。
+- 测试与发布：提供单元测试、CLI 集成测试、MCP mock server 测试、GitHub Actions、CI 脚本和 npm dry-run 发布脚本。
 - Benchmark：内置固定任务集，用于验证核心工具和控制逻辑。
 
 ## 环境要求
@@ -52,6 +56,39 @@ OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-pro
 ```
 
+## 配置系统
+
+配置优先级从高到低：
+
+1. CLI 参数
+2. 项目级 `.actlume/config.json`
+3. 用户级 `~/.actlume/config.json`
+4. 环境变量 / `.env`
+5. 默认值
+
+可以从示例文件开始：
+
+```powershell
+Copy-Item .actlume/config.example.json .actlume/config.json
+```
+
+支持的字段：
+
+```json
+{
+  "workspace": ".",
+  "memoryDir": ".agent-memory",
+  "readonly": false,
+  "maxSteps": 10,
+  "model": "gpt-4.1-mini",
+  "baseURL": "https://api.openai.com/v1",
+  "mcpConfigPath": ".agent-mcp.json",
+  "yes": false
+}
+```
+
+`apiKey` 也可以放入配置文件，但更推荐继续使用 `.env` 或系统环境变量。
+
 ## 使用方式
 
 在项目内运行：
@@ -60,6 +97,7 @@ OPENAI_MODEL=deepseek-v4-pro
 npm start -- "查看当前项目结构并总结"
 npm start
 npm run typecheck
+npm run test
 npm run benchmark
 ```
 
@@ -89,8 +127,13 @@ actlume --yes "修复一个小问题并运行检查"
 /status        查看模型、工作区、只读模式和记忆目录
 /tools         列出可用工具
 /mcp           查看 MCP 状态
+/mcp tools     查看 MCP 工具和 schema
 /mcp reload    重新加载 MCP server
 /memory        查看记忆统计
+/init          初始化当前 workspace 配置文件
+/doctor        检查本地环境和配置
+/compact       刷新项目摘要和索引缓存
+/clear         清屏
 /model <name>  切换模型
 /readonly on   开启只读模式
 /readonly off  关闭只读模式
@@ -98,6 +141,15 @@ actlume --yes "修复一个小问题并运行检查"
 /yes off       关闭自动确认
 /exit          退出
 ```
+
+多行输入可以用行尾反斜杠继续：
+
+```text
+请分析这个问题，\
+然后给出修改建议
+```
+
+交互式命令历史会保存到 `~/.actlume/history`。
 
 ## MCP 扩展
 
@@ -126,13 +178,33 @@ Copy-Item .agent-mcp.example.json .agent-mcp.json
         "SEARCH_API_KEY": "your_key_here"
       },
       "cwd": ".",
-      "toolPrefix": "mcp_search"
+      "toolPrefix": "mcp_search",
+      "startupTimeoutMs": 15000,
+      "toolTimeoutMs": 60000
     }
   }
 }
 ```
 
-注意：项目本体没有内置联网搜索。实时信息、新闻、比分、网页内容等能力应通过 MCP 或后续 web search 工具接入。
+`/mcp` 会展示 server 连接状态、禁用/失败原因和工具数量；`/mcp tools` 会展示 MCP 工具名称、读写/执行类型和 input schema。
+
+注意：项目本体没有内置联网搜索。实时信息、新闻、比分、网页内容等能力应通过 MCP 接入 web search、browser 或 fetch 工具。Agent 会识别这类任务；如果没有可用搜索类 MCP 工具，会直接提示需要先配置网络搜索，而不是凭空回答。
+
+## 安全策略
+
+默认情况下，文件写入和 patch 会被限制在当前 workspace 内，危险 shell 命令会被拦截。可以从示例文件开始：
+
+```powershell
+Copy-Item .agent-security.example.json .agent-security.json
+```
+
+支持的策略项：
+
+- `allowedTools` / `deniedTools`：工具 allowlist / denylist，支持精确名称和 `*` 通配。
+- `shellAllowlist` / `shellDenylist`：shell 命令正则 allowlist / denylist。
+- `allowHighRiskShell`：是否允许 `git reset --hard`、`npm publish` 等高风险命令。
+
+也可以用环境变量覆盖：`AGENT_ALLOWED_TOOLS`、`AGENT_DENIED_TOOLS`、`AGENT_SHELL_ALLOWLIST`、`AGENT_SHELL_DENYLIST`、`AGENT_ALLOW_HIGH_RISK_SHELL`。
 
 ## 主要工具
 
@@ -155,12 +227,17 @@ actlume/
 |   |-- main.ts          CLI 入口和交互模式
 |   |-- agent.ts         ReAct 主循环
 |   |-- llm.ts           LLM 调用封装
+|   |-- model-adapter.ts 模型适配和错误诊断
 |   |-- project-scan.ts  项目扫描
 |   |-- mcp-client.ts    MCP 桥接
 |   |-- tools/           本地工具
+|   |-- test-fixtures/   测试夹具
 |   `-- benchmark.ts     benchmark runner
+|-- .github/workflows/   CI workflow
+|-- CHANGELOG.md
 |-- README.md
 |-- README.en.md
+|-- .actlume/config.example.json
 |-- package.json
 `-- tsconfig.json
 ```
@@ -180,43 +257,46 @@ actlume/
   - [x] 修改后输出 diff 摘要。
   - [x] 自动识别并运行合适的检查命令。
   - [x] 检查失败后支持有限轮自动修复。
-- [ ] 权限和安全系统
-  - [ ] 增加命令风险识别。
-  - [ ] 默认限制写入当前 workspace。
-  - [ ] 支持工具权限配置和命令 allowlist / denylist。
-- [ ] 配置系统
-  - [ ] 支持项目级 `.actlume/config.json`。
-  - [ ] 支持用户级 `~/.actlume/config.json`。
-  - [ ] 明确 CLI 参数、项目配置、用户配置、环境变量和默认值的优先级。
-- [ ] MCP 与联网能力
-  - [ ] 完善 MCP 状态、工具展示、超时和错误诊断。
-  - [ ] 提供 web search MCP 示例配置。
-  - [ ] 对实时信息问题要求先调用搜索工具。
-- [ ] 交互式 CLI 体验
-  - [ ] 命令历史和多行输入。
-  - [ ] 彩色输出、Markdown 渲染和 diff 高亮。
-  - [ ] `/init`、`/doctor`、`/compact`、`/clear` 等辅助命令。
-- [ ] 模型适配和错误诊断
-  - [ ] 标准化不同 OpenAI-compatible 服务的异常提示。
-  - [ ] 增加模型能力声明和 JSON 修复重试策略。
-- [ ] 测试、CI 和发布
-  - [ ] 增加单元测试与 CLI 集成测试。
-  - [ ] 增加 MCP mock server 测试。
-  - [ ] 配置 GitHub Actions。
-  - [ ] 准备 npm 发布脚本和 changelog。
+- [x] 权限和安全系统
+  - [x] 增加命令风险识别。
+  - [x] 默认限制写入当前 workspace。
+  - [x] 支持工具权限配置和命令 allowlist / denylist。
+- [x] 配置系统
+  - [x] 支持项目级 `.actlume/config.json`。
+  - [x] 支持用户级 `~/.actlume/config.json`。
+  - [x] 明确 CLI 参数、项目配置、用户配置、环境变量和默认值的优先级。
+- [x] MCP 与联网能力
+  - [x] 完善 MCP 状态、工具展示、超时和错误诊断。
+  - [x] 提供 web search MCP 示例配置。
+  - [x] 对实时信息问题要求先调用搜索工具。
+- [x] 交互式 CLI 体验
+  - [x] 命令历史和多行输入。
+  - [x] 彩色输出、Markdown 渲染和 diff 高亮。
+  - [x] `/init`、`/doctor`、`/compact`、`/clear` 等辅助命令。
+- [x] 模型适配和错误诊断
+  - [x] 标准化不同 OpenAI-compatible 服务的异常提示。
+  - [x] 增加模型能力声明和 JSON 修复重试策略。
+- [x] 测试、CI 和发布
+  - [x] 增加单元测试与 CLI 集成测试。
+  - [x] 增加 MCP mock server 测试。
+  - [x] 配置 GitHub Actions。
+  - [x] 准备 npm 发布脚本和 changelog。
 
 ## 开发验证
 
 ```bash
 npm run typecheck
+npm run test
 npm run benchmark
+npm run ci
+npm run release:dry
 ```
 
-当前 benchmark 覆盖文件读取、搜索、项目扫描、编辑计划、只读保护、patch、shell、任务追踪和非法工具输入。
+当前 benchmark 覆盖文件读取、搜索、项目扫描、编辑计划、CLI 体验辅助函数、只读保护、patch、shell、安全策略、配置优先级、MCP 状态、实时信息 guard、任务追踪和非法工具输入。`npm test` 覆盖模型诊断、JSON 修复、CLI 集成和 MCP mock server。
 
 ## 安全说明
 
 - 建议先在 Git 仓库或测试目录中使用。
 - 不加 `--yes` 时，写入和执行类工具会请求确认。
 - `--readonly` 会阻止写入和执行类工具。
-- `.env`、`.agent-mcp.json` 和 `.agent-memory/` 不应提交到仓库。
+- `.env`、`.agent-mcp.json`、`.agent-security.json`、`.actlume/config.json` 和 `.agent-memory/` 不应提交到仓库。

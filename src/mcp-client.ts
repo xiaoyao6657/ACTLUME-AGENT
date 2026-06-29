@@ -12,7 +12,9 @@ const mcpServerConfigSchema = z.object({
   env: z.record(z.string(), z.string()).default({}),
   cwd: z.string().optional(),
   disabled: z.boolean().default(false),
-  toolPrefix: z.string().optional()
+  toolPrefix: z.string().optional(),
+  startupTimeoutMs: z.number().int().min(1000).max(120000).default(15000),
+  toolTimeoutMs: z.number().int().min(1000).max(300000).default(60000)
 });
 
 const mcpConfigSchema = z.object({
@@ -27,13 +29,32 @@ export type McpLoadedServer = {
   client: Client;
   transport: StdioClientTransport;
   tools: ToolDefinition[];
+  status: "connected";
+  command: string;
+  toolTimeoutMs: number;
 };
+
+export type McpServerStatus =
+  | {
+      name: string;
+      status: "connected";
+      command: string;
+      toolCount: number;
+      toolTimeoutMs: number;
+    }
+  | {
+      name: string;
+      status: "disabled" | "failed";
+      command?: string;
+      message?: string;
+    };
 
 export class McpToolManager {
   constructor(
     readonly configPath: string | undefined,
     readonly servers: McpLoadedServer[],
-    readonly warnings: string[]
+    readonly warnings: string[],
+    readonly statuses: McpServerStatus[]
   ) {}
 
   getTools(): ToolDefinition[] {
@@ -52,28 +73,44 @@ export async function loadMcpToolManager(params: {
 }): Promise<McpToolManager> {
   const configPath = await findMcpConfigPath(params);
   if (!configPath) {
-    return new McpToolManager(undefined, [], []);
+    return new McpToolManager(undefined, [], [], []);
   }
 
   const raw = await readFile(configPath, "utf8");
   const config = mcpConfigSchema.parse(JSON.parse(raw));
   const loadedServers: McpLoadedServer[] = [];
   const warnings: string[] = [];
+  const statuses: McpServerStatus[] = [];
 
   for (const [serverName, serverConfig] of Object.entries(config.servers)) {
     if (serverConfig.disabled) {
+      statuses.push({ name: serverName, status: "disabled", command: serverConfig.command });
       continue;
     }
 
     try {
       const loaded = await connectMcpServer(serverName, serverConfig, params.workspace);
       loadedServers.push(loaded);
+      statuses.push({
+        name: serverName,
+        status: "connected",
+        command: [serverConfig.command, ...serverConfig.args].join(" "),
+        toolCount: loaded.tools.length,
+        toolTimeoutMs: serverConfig.toolTimeoutMs
+      });
     } catch (error) {
-      warnings.push(`MCP server ${serverName} failed to load: ${(error as Error).message}`);
+      const message = (error as Error).message;
+      warnings.push(`MCP server ${serverName} failed to load: ${message}`);
+      statuses.push({
+        name: serverName,
+        status: "failed",
+        command: [serverConfig.command, ...serverConfig.args].join(" "),
+        message
+      });
     }
   }
 
-  return new McpToolManager(configPath, loadedServers, warnings);
+  return new McpToolManager(configPath, loadedServers, warnings, statuses);
 }
 
 async function findMcpConfigPath(params: {
@@ -122,15 +159,22 @@ async function connectMcpServer(
     version: "0.1.0"
   });
 
-  await client.connect(transport);
-  const listed = await client.listTools();
+  await withTimeout(client.connect(transport), serverConfig.startupTimeoutMs, `MCP server ${serverName} connect timed out`);
+  const listed = await withTimeout(
+    client.listTools(),
+    serverConfig.startupTimeoutMs,
+    `MCP server ${serverName} listTools timed out`
+  );
   const tools = listed.tools.map((tool) => toToolDefinition(serverName, serverConfig, client, tool));
 
   return {
     name: serverName,
     client,
     transport,
-    tools
+    tools,
+    status: "connected",
+    command: [serverConfig.command, ...serverConfig.args].join(" "),
+    toolTimeoutMs: serverConfig.toolTimeoutMs
   };
 }
 
@@ -156,13 +200,42 @@ function toToolDefinition(
     source: "mcp",
     parameters: tool.inputSchema,
     async run(input) {
-      const result = await client.callTool({
-        name: tool.name,
-        arguments: isRecord(input) ? input : {}
-      });
-      return formatMcpToolResult(result);
+      try {
+        const result = await withTimeout(
+          client.callTool({
+            name: tool.name,
+            arguments: isRecord(input) ? input : {}
+          }),
+          serverConfig.toolTimeoutMs,
+          `MCP tool ${exposedName} timed out after ${serverConfig.toolTimeoutMs}ms`
+        );
+        return formatMcpToolResult(result);
+      } catch (error) {
+        const message = (error as Error).message;
+        return toolFailure({
+          content: message,
+          errorCode: message.includes("timed out") ? "MCP_TOOL_TIMEOUT" : "MCP_TOOL_EXCEPTION",
+          retryable: true,
+          metadata: { serverName, toolName: tool.name, exposedName }
+        });
+      }
     }
   };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function inferSideEffect(annotations: McpTool["annotations"]): ToolSideEffect {

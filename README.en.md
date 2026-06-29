@@ -9,10 +9,14 @@ It is currently useful for project inspection, file search, small code edits, ch
 - OpenAI-compatible Chat Completions: works with OpenAI, DeepSeek, and compatible services.
 - Local tools: project scan, edit planning, tree, text search, file IO, patching, controlled shell, recall, and task tracking.
 - Interactive CLI: supports one-shot tasks and ongoing sessions.
-- Safety controls: write, patch, shell, and non-read-only MCP calls require confirmation by default; `--readonly` and `--yes` are available.
+- CLI experience: command history, multiline input, colored output, diff highlighting, and helper commands.
+- Safety controls: write, patch, shell, and non-read-only MCP calls require confirmation by default; `--readonly`, `--yes`, and `.agent-security.json` are available.
+- Configuration system: CLI args, project config, user config, environment variables, and defaults are merged by precedence.
 - MCP extension: external search, browser, database, GitHub, and similar tools can be connected through `.agent-mcp.json`.
 - Logs and memory: tool calls, task state, and run logs are written to `.agent-memory`.
 - Code editing workflow: `editPlan` is required before file edits, changes are summarized afterwards, and suggested checks can run automatically.
+- Model adapters and diagnostics: detects OpenAI, DeepSeek, Ollama, and generic OpenAI-compatible services, with clearer authentication, gateway, rate-limit, and protocol errors.
+- Tests and release: includes unit tests, CLI integration tests, MCP mock server tests, GitHub Actions, CI scripts, and an npm dry-run release script.
 - Benchmark: a fixed suite validates core tools and control flow.
 
 ## Requirements
@@ -52,6 +56,39 @@ OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-v4-pro
 ```
 
+## Configuration
+
+Config precedence from highest to lowest:
+
+1. CLI arguments
+2. Project-level `.actlume/config.json`
+3. User-level `~/.actlume/config.json`
+4. Environment variables / `.env`
+5. Defaults
+
+Start from the example file:
+
+```powershell
+Copy-Item .actlume/config.example.json .actlume/config.json
+```
+
+Supported fields:
+
+```json
+{
+  "workspace": ".",
+  "memoryDir": ".agent-memory",
+  "readonly": false,
+  "maxSteps": 10,
+  "model": "gpt-4.1-mini",
+  "baseURL": "https://api.openai.com/v1",
+  "mcpConfigPath": ".agent-mcp.json",
+  "yes": false
+}
+```
+
+`apiKey` can also be placed in config files, but `.env` or system environment variables are preferred.
+
 ## Usage
 
 Run inside this project:
@@ -60,6 +97,7 @@ Run inside this project:
 npm start -- "Inspect the current project structure and summarize it"
 npm start
 npm run typecheck
+npm run test
 npm run benchmark
 ```
 
@@ -89,8 +127,13 @@ Common interactive commands:
 /status        Show model, workspace, readonly mode, and memory dir
 /tools         List available tools
 /mcp           Show MCP status
+/mcp tools     Show MCP tools and schemas
 /mcp reload    Reload MCP servers
 /memory        Show memory stats
+/init          Initialize config files in the current workspace
+/doctor        Check local environment and configuration
+/compact       Refresh project summary and index cache
+/clear         Clear the terminal
 /model <name>  Switch model
 /readonly on   Enable readonly mode
 /readonly off  Disable readonly mode
@@ -98,6 +141,15 @@ Common interactive commands:
 /yes off       Disable auto-confirm
 /exit          Quit
 ```
+
+Use a trailing backslash for multiline input:
+
+```text
+Analyze this issue,\
+then suggest a fix
+```
+
+Interactive command history is saved to `~/.actlume/history`.
 
 ## MCP
 
@@ -126,13 +178,33 @@ Config shape:
         "SEARCH_API_KEY": "your_key_here"
       },
       "cwd": ".",
-      "toolPrefix": "mcp_search"
+      "toolPrefix": "mcp_search",
+      "startupTimeoutMs": 15000,
+      "toolTimeoutMs": 60000
     }
   }
 }
 ```
 
-Note: actlume does not include built-in web search yet. Realtime information, news, scores, and web pages should come from MCP or a future web search tool.
+`/mcp` shows server status, disabled/failed reasons, and tool counts. `/mcp tools` shows MCP tool names, side-effect type, and input schemas.
+
+Note: actlume does not include built-in web search. Realtime information, news, scores, and web pages should come from MCP web search, browser, or fetch tools. The agent detects these tasks; if no search-like MCP tool is available, it asks you to configure network search instead of guessing.
+
+## Security Policy
+
+By default, file writes and patches are restricted to the current workspace, and dangerous shell commands are blocked. Start from the example file:
+
+```powershell
+Copy-Item .agent-security.example.json .agent-security.json
+```
+
+Supported policy fields:
+
+- `allowedTools` / `deniedTools`: tool allowlist / denylist with exact names or `*` wildcards.
+- `shellAllowlist` / `shellDenylist`: shell command regex allowlist / denylist.
+- `allowHighRiskShell`: whether to allow high-risk commands such as `git reset --hard` or `npm publish`.
+
+Environment overrides are also supported: `AGENT_ALLOWED_TOOLS`, `AGENT_DENIED_TOOLS`, `AGENT_SHELL_ALLOWLIST`, `AGENT_SHELL_DENYLIST`, and `AGENT_ALLOW_HIGH_RISK_SHELL`.
 
 ## Main Tools
 
@@ -155,12 +227,17 @@ actlume/
 |   |-- main.ts          CLI entry and interactive mode
 |   |-- agent.ts         ReAct loop
 |   |-- llm.ts           LLM wrapper
+|   |-- model-adapter.ts Model adapters and diagnostics
 |   |-- project-scan.ts  Project scanning
 |   |-- mcp-client.ts    MCP bridge
 |   |-- tools/           Local tools
+|   |-- test-fixtures/   Test fixtures
 |   `-- benchmark.ts     Benchmark runner
+|-- .github/workflows/   CI workflow
+|-- CHANGELOG.md
 |-- README.md
 |-- README.en.md
+|-- .actlume/config.example.json
 |-- package.json
 `-- tsconfig.json
 ```
@@ -180,43 +257,46 @@ The goal is to move `actlume` from a learning MVP toward a usable prototype.
   - [x] Summarize diffs after changes.
   - [x] Detect and run suitable checks automatically.
   - [x] Support limited automatic repair after check failures.
-- [ ] Permissions and safety
-  - [ ] Add command risk detection.
-  - [ ] Restrict writes to the current workspace by default.
-  - [ ] Support tool permission config and command allowlists / denylists.
-- [ ] Configuration system
-  - [ ] Support project-level `.actlume/config.json`.
-  - [ ] Support user-level `~/.actlume/config.json`.
-  - [ ] Define precedence for CLI args, project config, user config, environment variables, and defaults.
-- [ ] MCP and networked capabilities
-  - [ ] Improve MCP status, tool display, timeouts, and diagnostics.
-  - [ ] Provide an example web search MCP config.
-  - [ ] Require search tools for realtime-information questions.
-- [ ] Interactive CLI experience
-  - [ ] Command history and multiline input.
-  - [ ] Colored output, Markdown rendering, and diff highlighting.
-  - [ ] `/init`, `/doctor`, `/compact`, and `/clear` helper commands.
-- [ ] Model adapters and diagnostics
-  - [ ] Standardize diagnostics for OpenAI-compatible services.
-  - [ ] Add model capability metadata and JSON repair retries.
-- [ ] Tests, CI, and release
-  - [ ] Add unit tests and CLI integration tests.
-  - [ ] Add MCP mock server tests.
-  - [ ] Configure GitHub Actions.
-  - [ ] Prepare npm release scripts and changelog.
+- [x] Permissions and safety
+  - [x] Add command risk detection.
+  - [x] Restrict writes to the current workspace by default.
+  - [x] Support tool permission config and command allowlists / denylists.
+- [x] Configuration system
+  - [x] Support project-level `.actlume/config.json`.
+  - [x] Support user-level `~/.actlume/config.json`.
+  - [x] Define precedence for CLI args, project config, user config, environment variables, and defaults.
+- [x] MCP and networked capabilities
+  - [x] Improve MCP status, tool display, timeouts, and diagnostics.
+  - [x] Provide an example web search MCP config.
+  - [x] Require search tools for realtime-information questions.
+- [x] Interactive CLI experience
+  - [x] Command history and multiline input.
+  - [x] Colored output, Markdown rendering, and diff highlighting.
+  - [x] `/init`, `/doctor`, `/compact`, and `/clear` helper commands.
+- [x] Model adapters and diagnostics
+  - [x] Standardize diagnostics for OpenAI-compatible services.
+  - [x] Add model capability metadata and JSON repair retries.
+- [x] Tests, CI, and release
+  - [x] Add unit tests and CLI integration tests.
+  - [x] Add MCP mock server tests.
+  - [x] Configure GitHub Actions.
+  - [x] Prepare npm release scripts and changelog.
 
 ## Development Checks
 
 ```bash
 npm run typecheck
+npm run test
 npm run benchmark
+npm run ci
+npm run release:dry
 ```
 
-The current benchmark covers file reading, search, project scan, edit planning, readonly protection, patching, shell, task tracking, and invalid tool input.
+The current benchmark covers file reading, search, project scan, edit planning, CLI experience helpers, readonly protection, patching, shell, security policy, config precedence, MCP status, realtime-information guard, task tracking, and invalid tool input. `npm test` covers model diagnostics, JSON repair, CLI integration, and the MCP mock server.
 
 ## Safety Notes
 
 - Prefer using it first inside a Git repo or test workspace.
 - Without `--yes`, write and execute tools request confirmation.
 - `--readonly` blocks write and execute tools.
-- `.env`, `.agent-mcp.json`, and `.agent-memory/` should not be committed.
+- `.env`, `.agent-mcp.json`, `.agent-security.json`, `.actlume/config.json`, and `.agent-memory/` should not be committed.

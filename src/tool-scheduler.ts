@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { checkToolPermission } from "./security.js";
 import { toolFailure } from "./tool-result.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 
@@ -25,6 +26,16 @@ export async function runRegisteredTool(
       errorCode: "READONLY_BLOCKED",
       retryable: false,
       metadata: { toolName: tool.name, sideEffect: tool.sideEffect }
+    });
+  }
+
+  const permission = checkToolPermission(tool, ctx.securityPolicy);
+  if (!permission.allowed) {
+    return toolFailure({
+      content: permission.reason,
+      errorCode: permission.errorCode,
+      retryable: false,
+      metadata: { toolName: tool.name, policy: ctx.securityPolicy }
     });
   }
 

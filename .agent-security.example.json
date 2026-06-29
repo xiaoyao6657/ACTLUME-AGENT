@@ -1,0 +1,7 @@
+{
+  "allowedTools": [],
+  "deniedTools": [],
+  "shellAllowlist": [],
+  "shellDenylist": [],
+  "allowHighRiskShell": false
+}

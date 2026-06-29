@@ -1,0 +1,10 @@
+{
+  "workspace": ".",
+  "memoryDir": ".agent-memory",
+  "readonly": false,
+  "maxSteps": 10,
+  "model": "gpt-4.1-mini",
+  "baseURL": "https://api.openai.com/v1",
+  "mcpConfigPath": ".agent-mcp.json",
+  "yes": false
+}

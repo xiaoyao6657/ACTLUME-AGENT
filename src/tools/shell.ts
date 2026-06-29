@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { assessShellCommand } from "../security.js";
 import type { ShellResult, ToolDefinition } from "../types.js";
 import { toolFailure, toolSuccess } from "../tool-result.js";
 import { resolveInsideCwd } from "./path-utils.js";
@@ -12,17 +13,6 @@ const shellSchema = z.object({
   cwd: z.string().default("."),
   timeoutMs: z.number().int().min(1000).max(120000).default(60000)
 });
-
-const forbiddenPatterns = [
-  /\brm\s+-rf\s+[/.~]?/i,
-  /\bshutdown\b/i,
-  /\breboot\b/i,
-  /\bmkfs\b/i,
-  /\bdd\s+if=/i,
-  /\bdel\s+\/[fsq]/i,
-  /(^|[;&|]\s*)format(\s|$)/i,
-  />\s*\/dev\/sd[a-z]/i
-];
 
 export const shellTool: ToolDefinition = {
   name: "shell",
@@ -40,17 +30,18 @@ export const shellTool: ToolDefinition = {
   async run(input, ctx) {
     const args = shellSchema.parse(input);
     const workdir = resolveInsideCwd(ctx.cwd, args.cwd);
-    if (forbiddenPatterns.some((pattern) => pattern.test(args.command))) {
+    const assessment = assessShellCommand(args.command, ctx.securityPolicy);
+    if (!assessment.allowed) {
       const result: ShellResult = {
         stdout: "",
-        stderr: `Blocked potentially dangerous command: ${args.command}`,
+        stderr: `${assessment.reason ?? "Blocked shell command"}: ${args.command}`,
         exitCode: 126
       };
       return toolFailure({
         content: JSON.stringify(result),
-        errorCode: "SHELL_BLOCKED",
+        errorCode: assessment.errorCode ?? "SHELL_BLOCKED",
         retryable: false,
-        metadata: { command: args.command, result }
+        metadata: { command: args.command, result, assessment }
       });
     }
 
@@ -65,7 +56,7 @@ export const shellTool: ToolDefinition = {
         stderr: result.stderr,
         exitCode: 0
       };
-      return toolSuccess(JSON.stringify(shellResult), { command: args.command, result: shellResult });
+      return toolSuccess(JSON.stringify(shellResult), { command: args.command, result: shellResult, assessment });
     } catch (error) {
       const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; code?: number };
       const shellResult: ShellResult = {
@@ -77,7 +68,7 @@ export const shellTool: ToolDefinition = {
         content: JSON.stringify(shellResult),
         errorCode: "SHELL_EXIT_NONZERO",
         retryable: true,
-        metadata: { command: args.command, result: shellResult }
+        metadata: { command: args.command, result: shellResult, assessment }
       });
     }
   }
