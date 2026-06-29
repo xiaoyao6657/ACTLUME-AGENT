@@ -1,0 +1,29 @@
+{
+  "name": "actlume",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "actlume": "./bin/actlume.mjs",
+    "ma": "./bin/actlume.mjs"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "benchmark": "tsx src/benchmark.ts"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "latest",
+    "openai": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "example_fetch": {
+      "disabled": true,
+      "command": "npx",
+      "args": ["-y", "some-mcp-server-package"],
+      "env": {},
+      "cwd": ".",
+      "toolPrefix": "mcp_fetch"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+.agent-mcp.json
+.agent-mcp.local.json
+.agent-memory/
+.agent-benchmark/
+npm-debug.log*
