@@ -4,6 +4,17 @@
 
 它目前适合做：项目结构阅读、文件检索、代码小修改、运行检查命令、记录任务状态，以及通过 MCP 接入外部工具。
 
+## Demo
+
+建议将演示视频放在 `assets/demo/` 目录下，并使用英文文件名，避免 GitHub Markdown 链接中出现空格、中文或转义问题。
+
+| Demo | 内容 | 视频 |
+| --- | --- | --- |
+| demo1 | 基础 CLI 工作流：启动 CLI、执行简单任务、展示工具调用与 `.agent-memory` 记录 | [demo1-cli-workflow.mp4](assets/demo/demo1-cli-workflow.mp4) |
+| demo2 | 代码任务修复演示：展示 `editPlan -> inspect -> edit -> verify -> final` 的完整闭环 | [demo2-code-repair.mp4](assets/demo/demo2-code-repair.mp4) |
+| demo3 | MCP 接入演示：展示 `.agent-mcp.json`、`/mcp`、`/mcp tools` 与外部工具加载 | [demo3-mcp-integration.mp4](assets/demo/demo3-mcp-integration.mp4) |
+| demo4 | 真实项目评测结果：展示 Briefcase、Scrapy、Sentry、js-utils 等任务的评测结果与步数 | [demo4-evaluation-results.mp4](assets/demo/demo4-evaluation-results.mp4) |
+
 ## 当前能力
 
 - OpenAI-compatible Chat Completions：支持 OpenAI、DeepSeek 等兼容接口。

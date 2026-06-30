@@ -8,4 +8,9 @@ dist/
 .actlume/config.local.json
 .agent-memory/
 .agent-benchmark/
+.claude/
+__pycache__/
+*.py[cod]
+.docx_inspect_resume/
+resume-render/
 npm-debug.log*
