@@ -300,3 +300,35 @@ npm run release:dry
 - 不加 `--yes` 时，写入和执行类工具会请求确认。
 - `--readonly` 会阻止写入和执行类工具。
 - `.env`、`.agent-mcp.json`、`.agent-security.json`、`.actlume/config.json` 和 `.agent-memory/` 不应提交到仓库。
+
+## 当前限制
+
+actlume 是学习型原型项目，以下限制在使用和评估时应了解：
+
+**模型适配**
+- 仅正式测试过 DeepSeek (deepseek-v4-pro)，OpenAI 和 Ollama 兼容接口理论上可用但未充分验证。
+- Agent 行为高度依赖模型能力。换模型后，步数、编辑成功率、护栏拦截次数可能有显著差异。
+
+**代码修改能力**
+- 评估覆盖场景有限：4 个项目均为 "fix bug + add test + run check" 模式，缺少大规模重构、多文件联动、前端 UI 修改等场景。
+- 目前只在 Python 和 JavaScript 上完成过验证，其他语言未经测试。
+- 默认 `maxSteps=10` 对代码任务通常不足，需手动 `--max-steps` 调高。
+
+**MCP 与联网**
+- MCP 客户端已实现，但目前仅验证过 filesystem 和 DuckDuckGo web search 两种 server。README 中提及的数据库、浏览器、GitHub 等 MCP server 未经实测。
+- 免费 web search（DuckDuckGo）对中文新闻索引时效性有限，搜索结果可能滞后。
+
+**Windows 兼容**
+- Shell 在 Windows 上通过 cmd.exe 执行，部分 Unix 命令（`tail`、`grep` 等）不可用。
+- 部分 Python 测试工具（`pytest-cov`、`pytest-forked`）在 Windows 下有兼容问题。
+
+**已知架构限制**
+- 不提供流式输出（streaming），响应为完整批次。
+- 每次 `run` 独立执行，不支持从上次中断处恢复。
+- 非代码任务缺少探索预算控制，可能在搜索类任务中消耗过多步数。
+- 无 RAG / 向量检索能力，代码检索依赖 `searchText`（正则匹配）+ `readFile`（行号读取）。
+- Agent 不会主动安装缺失的依赖包，需手动提前配置好环境。
+
+**基准与测试**
+- Benchmark 为 16 个内部单元级测试，不代表真实场景表现。评估结果来自 4 个外部项目约 5 轮 runs。
+- 无并发、安全渗透、大规模代码库压力测试。

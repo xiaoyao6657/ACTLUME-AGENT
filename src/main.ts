@@ -34,7 +34,7 @@ type CliState = {
   workspace: string;
   memoryDir: string;
   readonly: boolean;
-  maxSteps: number;
+  maxSteps?: number;
   model: string;
   baseURL?: string;
   apiKey?: string;

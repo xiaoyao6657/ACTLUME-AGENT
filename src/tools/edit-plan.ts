@@ -12,13 +12,18 @@ const editPlanSchema = z.object({
 export const editPlanTool: ToolDefinition = {
   name: "editPlan",
   description:
-    "Create or replace the current edit plan before modifying workspace files. Include expected files and concise steps.",
+    "Create the current edit plan before modifying workspace files. List only likely touched files in expectedFiles; it is a scoped candidate list, not a requirement to touch every file. Include concise steps.",
   sideEffect: "read",
   parameters: {
     type: "object",
     properties: {
       summary: { type: "string" },
-      expectedFiles: { type: "array", items: { type: "string" }, default: [] },
+      expectedFiles: {
+        type: "array",
+        items: { type: "string" },
+        default: [],
+        description: "Likely files to touch; keep this narrow and do not list unrelated possibilities."
+      },
       steps: { type: "array", items: { type: "string" }, default: [] }
     },
     required: ["summary"]
@@ -33,7 +38,7 @@ export const editPlanTool: ToolDefinition = {
     return toolSuccess(
       [
         `Edit plan saved: ${state.plan?.summary}`,
-        `Expected files: ${state.plan?.expectedFiles.join(", ") || "none listed"}`,
+        `Likely files: ${state.plan?.expectedFiles.join(", ") || "none listed"}`,
         `Steps: ${state.plan?.steps.join(" | ") || "none listed"}`
       ].join("\n"),
       state.plan

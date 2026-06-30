@@ -16,7 +16,7 @@ export type AppConfig = {
   workspace: string;
   memoryDir: string;
   readonly: boolean;
-  maxSteps: number;
+  maxSteps?: number;
   model: string;
   baseURL?: string;
   apiKey?: string;
@@ -54,10 +54,9 @@ const configSchema = z.object({
   mcpConfigPath: z.string().min(1).optional()
 });
 
-const defaults: Required<Pick<AppConfig, "memoryDir" | "readonly" | "maxSteps" | "model" | "yes">> = {
+const defaults: Required<Pick<AppConfig, "memoryDir" | "readonly" | "model" | "yes">> = {
   memoryDir: ".agent-memory",
   readonly: false,
-  maxSteps: 10,
   model: "gpt-4.1-mini",
   yes: false
 };
@@ -75,7 +74,7 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
     {
       memoryDir: defaults.memoryDir,
       readonly: defaults.readonly,
-      maxSteps: defaults.maxSteps,
+
       model: defaults.model,
       yes: defaults.yes
     },
@@ -96,7 +95,7 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
         {
           memoryDir: defaults.memoryDir,
           readonly: defaults.readonly,
-          maxSteps: defaults.maxSteps,
+    
           model: defaults.model,
           yes: defaults.yes
         },
@@ -116,7 +115,7 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
     workspace,
     memoryDir,
     readonly: merged.readonly ?? defaults.readonly,
-    maxSteps: merged.maxSteps ?? defaults.maxSteps,
+    maxSteps: merged.maxSteps,
     model: merged.model ?? defaults.model,
     baseURL: merged.baseURL,
     apiKey: merged.apiKey,

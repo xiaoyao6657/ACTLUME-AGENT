@@ -23,11 +23,14 @@ Agent 已经从早期的 40+ 步失败、假完成、重复探索，逐步改善
 
 当前评估目录：
 
-| 项目 | 路径 | 状态 | 结论 |
-| --- | --- | --- | --- |
-| Briefcase | `D:\workspace\agent-evals\briefcase` | 已完成第一项 | 可进入下一项目 |
-| Scrapy | `D:\workspace\agent-evals\scrapy` | 待测 | 建议作为第二项继续 |
-| sentry-python | `D:\workspace\agent-evals\sentry-python` | 待测 | 第三项 |
+| 项目 | 路径 | 状态 | 步数 | 结论 |
+| --- | --- | --- | --- | --- |
+| Briefcase | `D:\workspace\agent-evals\briefcase` | ✅ 完成 | 22 | 核心能力验证通过 |
+| Scrapy | `D:\workspace\agent-evals\scrapy` | ✅ 完成 | 23 | 编辑恢复+修复流程验证 |
+| sentry-python | `D:\workspace\agent-evals\sentry-python` | ✅ 完成 | 17 | 最干净完成，0 次护栏拦截 |
+| js-utils | `D:\workspace\agent-evals\js-utils` | ✅ 完成 | 12 | 跨语言能力验证 |
+
+全部四个项目均在一次跑通或少量修复后完成，步数分布在 12-23 步之间。
 
 Briefcase 第一项结果：
 

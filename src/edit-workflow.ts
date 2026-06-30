@@ -160,7 +160,7 @@ export function formatEditWorkflowSummary(state: EditWorkflowState, gitDiffSumma
   if (state.plan) {
     lines.push(`- Plan: ${state.plan.summary}`);
     lines.push(
-      `- Expected files: ${state.plan.expectedFiles.length === 0 ? "none listed" : state.plan.expectedFiles.join(", ")}`
+      `- Likely files: ${state.plan.expectedFiles.length === 0 ? "none listed" : state.plan.expectedFiles.join(", ")}`
     );
   } else {
     lines.push("- Plan: none");
