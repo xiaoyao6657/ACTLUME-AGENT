@@ -1,7 +1,10 @@
 import type { ToolDefinition } from "../types.js";
+import { agentTool } from "./agent.js";
 import { editPlanTool } from "./edit-plan.js";
-import { listDirTool, searchTextTool, treeTool } from "./explore.js";
+import { globTool, listDirTool, searchTextTool, treeTool } from "./explore.js";
+import { memoryListTool, memoryRecallTool, memorySaveTool } from "./memory.js";
 import { applyPatchTool } from "./patch.js";
+import { enterPlanModeTool, exitPlanModeTool, readPlanTool, updatePlanTool, writePlanTool } from "./plan-mode.js";
 import { projectScanTool } from "./project-scan.js";
 import {
   appendFileTool,
@@ -17,11 +20,18 @@ import {
 } from "./read-write.js";
 import { recallTool } from "./recall.js";
 import { shellTool } from "./shell.js";
+import { skillTool } from "./skill.js";
 import { taskAddTool, taskListTool, taskUpdateTool } from "./tasks.js";
 
 export const tools: ToolDefinition[] = [
   projectScanTool,
+  enterPlanModeTool,
+  writePlanTool,
+  updatePlanTool,
+  readPlanTool,
+  exitPlanModeTool,
   editPlanTool,
+  globTool,
   listDirTool,
   treeTool,
   searchTextTool,
@@ -37,6 +47,11 @@ export const tools: ToolDefinition[] = [
   fileExistsTool,
   applyPatchTool,
   shellTool,
+  skillTool,
+  agentTool,
+  memorySaveTool,
+  memoryListTool,
+  memoryRecallTool,
   recallTool,
   taskListTool,
   taskAddTool,

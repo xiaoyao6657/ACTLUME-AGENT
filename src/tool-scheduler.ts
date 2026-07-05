@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import { checkToolPermission } from "./security.js";
+import { checkToolPermission, isPlanModeAllowedWriteTool } from "./security.js";
 import { toolFailure } from "./tool-result.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./types.js";
 
@@ -20,7 +20,7 @@ export async function runRegisteredTool(
     });
   }
 
-  if (ctx.readonly && tool.sideEffect !== "read") {
+  if (ctx.readonly && tool.sideEffect !== "read" && !(ctx.permissionMode === "plan" && isPlanModeAllowedWriteTool(tool.name))) {
     return toolFailure({
       content: `Readonly mode blocked ${tool.name} because it is a ${tool.sideEffect} tool.`,
       errorCode: "READONLY_BLOCKED",

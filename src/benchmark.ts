@@ -454,6 +454,7 @@ async function main(): Promise<void> {
     memoryDir: benchmarkMemoryDir,
     readonly: false,
     runId: "benchmark",
+    permissionMode: "default",
     securityPolicy: defaultSecurityPolicy
   };
 

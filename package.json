@@ -22,7 +22,7 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
-    "test": "tsx --test src/model-adapter.test.ts src/external-info.test.ts src/cli-experience.test.ts src/agent-output.test.ts src/mcp-client.test.ts src/cli-integration.test.ts",
+    "test": "tsx --test src/model-adapter.test.ts src/external-info.test.ts src/cli-experience.test.ts src/agent-output.test.ts src/mcp-client.test.ts src/cli-integration.test.ts src/session.test.ts src/security.test.ts src/prompt.test.ts src/plan-mode.test.ts src/skills.test.ts src/subagent.test.ts src/memory.test.ts src/context-artifacts.test.ts src/llm-stream.test.ts src/tool-batcher.test.ts",
     "typecheck": "tsc --noEmit",
     "replay": "tsx scripts/replay-run.ts",
     "benchmark": "tsx src/benchmark.ts",

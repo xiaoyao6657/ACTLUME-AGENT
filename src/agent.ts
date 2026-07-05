@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { ActionStore } from "./action-store.js";
+import { persistLargeObservation } from "./context-artifacts.js";
 import { compactHistoryForPrompt } from "./context-policy.js";
 import { getContextBudget } from "./context-budget.js";
 import {
@@ -16,26 +17,69 @@ import {
 } from "./edit-workflow.js";
 import { hasMcpSearchTool, missingSearchToolMessage, requiresRealtimeExternalInfo } from "./external-info.js";
 import { callLLM } from "./llm.js";
+import { buildMemoryPromptSection } from "./memory.js";
 import { inferModelProfile, modelProfileForPrompt } from "./model-adapter.js";
+import { formatActionInputForPrompt, parseAgentOutput } from "./output-parser.js";
+import { buildWorkspacePromptContext } from "./prompt.js";
 import { formatProjectScan, scanProjectWithCache } from "./project-scan.js";
 import { RunLogger } from "./run-log.js";
-import { defaultSecurityPolicy } from "./security.js";
+import { assessShellCommand, defaultSecurityPolicy, isSensitivePath, sensitivePathMessage, shouldAutoApproveTool, shouldAutoDenyConfirmation } from "./security.js";
+import {
+  isShellFileEditCommand,
+  isShellFileReadCommand,
+  isShellEnvironmentSetupCommand,
+  isShellVerificationCommand,
+} from "./shell-classify.js";
 import { summarizeObservation, summarizeText } from "./summary.js";
 import { formatToolResultForObservation, toolFailure } from "./tool-result.js";
 import { buildToolConfirmationRequest } from "./tool-preview.js";
 import { runRegisteredTool } from "./tool-scheduler.js";
 import type {
   AgentActionOutput,
-  AgentFinalOutput,
   AgentHistoryItem,
-  AgentOutput,
   ToolConfirmationRequest,
   ToolContext,
   ToolDefinition,
   ToolResult,
-  SecurityPolicy
+  SecurityPolicy,
+  PermissionMode
 } from "./types.js";
 import { getToolDescriptions, tools as localTools } from "./tools/registry.js";
+import {
+  isCodingChangeTask,
+  maybeBlockByStageBudget,
+  navigateWorkflow,
+  classifyActionIntent,
+  workflowPolicyForNavigation,
+  formatAllowedIntentsForPrompt,
+  workflowProfileForTask,
+  issueFixPromptHints,
+  isReadyForFinal,
+  answerLooksIncomplete,
+  type DuplicatePythonTestFunction,
+  countRecentWorkflowGuardBlocks,
+} from "./workflow-guard.js";
+
+// Re-export for test backward compatibility
+export {
+  isCodingChangeTask,
+  maybeBlockByStageBudget,
+  navigateWorkflow,
+  classifyActionIntent,
+  workflowPolicyForNavigation,
+  formatAllowedIntentsForPrompt,
+  workflowProfileForTask,
+  issueFixPromptHints,
+  isReadyForFinal,
+  answerLooksIncomplete,
+  isShellFileEditCommand,
+  isShellFileReadCommand,
+  isShellEnvironmentSetupCommand,
+  isShellVerificationCommand,
+  parseAgentOutput,
+  formatActionInputForPrompt,
+};
+export type { EditWorkflowState };
 
 export type RunAgentOptions = {
   userTask: string;
@@ -49,8 +93,12 @@ export type RunAgentOptions = {
   baseURL?: string;
   tools?: ToolDefinition[];
   autoConfirm?: boolean;
+  permissionMode?: PermissionMode;
+  streaming?: boolean;
   securityPolicy?: SecurityPolicy;
   confirmToolCall?: (request: ToolConfirmationRequest) => Promise<boolean>;
+  initialHistory?: AgentHistoryItem[];
+  initialWorkflowState?: EditWorkflowState;
 };
 
 export type RunAgentResult = {
@@ -60,6 +108,8 @@ export type RunAgentResult = {
   logPath: string;
   stepsUsed: number;
   toolCalls: number;
+  history: AgentHistoryItem[];
+  workflowState: EditWorkflowState;
 };
 
 type ProjectContextInfo = {
@@ -96,11 +146,13 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   const memoryDir = options.memoryDir ?? process.env.AGENT_MEMORY_DIR ?? ".agent-memory";
   const maxSteps = options.maxSteps ?? Number(process.env.AGENT_MAX_STEPS ?? defaultMaxStepsFor(options.userTask));
   const runId = options.runId ?? crypto.randomUUID();
+  const permissionMode = options.permissionMode ?? (options.autoConfirm ? "bypassPermissions" : "default");
   const ctx: ToolContext = {
     cwd,
     memoryDir,
-    readonly: options.readonly ?? false,
+    readonly: (options.readonly ?? false) || permissionMode === "plan",
     runId,
+    permissionMode,
     securityPolicy: options.securityPolicy ?? defaultSecurityPolicy
   };
   const availableTools = options.tools ?? localTools;
@@ -116,6 +168,10 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
   let finalAssessmentRetries = 0;
   let stepsUsed = 0;
   let toolCalls = 0;
+  const finishResult = async (answer: string, status: RunAgentResult["status"]): Promise<RunAgentResult> => ({
+    answer, status, runId: logger.runId, logPath: logger.filePath, stepsUsed, toolCalls, history,
+    workflowState: await editWorkflow.get()
+  });
 
   await logger.write({
     event: "run_start",
@@ -135,14 +191,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
     const answer = missingSearchToolMessage(options.userTask);
     await logger.write({ event: "external_info_blocked", data: { answer, availableTools: availableTools.map((tool) => tool.name) } });
     await logger.write({ event: "run_end", data: { status: "failed", answer } });
-    return {
-      answer,
-      status: "failed",
-      runId: logger.runId,
-      logPath: logger.filePath,
-      stepsUsed,
-      toolCalls
-    };
+    return await finishResult(answer, "failed");
   }
 
   for (let step = 1; step <= maxSteps; step += 1) {
@@ -170,14 +219,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
       if (invalidJsonRetries > 2) {
         const answer = `Stopped after repeated invalid JSON output. Last error: ${parsed.error}`;
         await logger.write({ event: "run_end", data: { status: "failed", answer } });
-        return {
-          answer,
-          status: "failed",
-          runId: logger.runId,
-          logPath: logger.filePath,
-          stepsUsed,
-          toolCalls
-        };
+        return await finishResult(answer, "failed");
       }
 
       history.push({
@@ -204,14 +246,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
           "For a fix/implementation task, rerun with a narrower instruction or make sure the agent calls editPlan and applies a focused edit.";
         await logger.write({ event: "final_without_required_edits", step, data: { answer } });
         await logger.write({ event: "run_end", data: { status: "failed", answer } });
-        return {
-          answer,
-          status: "failed",
-          runId: logger.runId,
-          logPath: logger.filePath,
-          stepsUsed,
-          toolCalls
-        };
+        return await finishResult(answer, "failed");
       }
 
       if (requiresEdits) {
@@ -295,26 +330,12 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
       if (!finalAssessment.ok) {
         await logger.write({ event: "final_incomplete", step, data: { answer, assessment: finalAssessment } });
         await logger.write({ event: "run_end", data: { status: "failed", answer } });
-        return {
-          answer,
-          status: "failed",
-          runId: logger.runId,
-          logPath: logger.filePath,
-          stepsUsed,
-          toolCalls
-        };
+        return await finishResult(answer, "failed");
       }
 
       await logger.write({ event: "final", step, data: { answer } });
       await logger.write({ event: "run_end", data: { status: "completed", answer } });
-      return {
-        answer,
-        status: "completed",
-        runId: logger.runId,
-        logPath: logger.filePath,
-        stepsUsed,
-        toolCalls
-      };
+      return await finishResult(answer, "completed");
     }
 
     if (isFinalTurn) {
@@ -325,14 +346,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
           : "Reached final turn before completion.";
       await logger.write({ event: "final_turn_action_blocked", step, data: { attempted, answer } });
       await logger.write({ event: "run_end", data: { status: "max_steps", answer } });
-      return {
-        answer,
-        status: "max_steps",
-        runId: logger.runId,
-        logPath: logger.filePath,
-        stepsUsed,
-        toolCalls
-      };
+      return await finishResult(answer, "max_steps");
     }
 
     const action = parsed.value;
@@ -368,14 +382,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
 
   const answer = `Reached max steps (${maxSteps}); task may be incomplete.`;
   await logger.write({ event: "run_end", data: { status: "max_steps", answer } });
-  return {
-    answer,
-    status: "max_steps",
-    runId: logger.runId,
-    logPath: logger.filePath,
-    stepsUsed,
-    toolCalls
-  };
+  return await finishResult(answer, "max_steps");
 }
 
 async function maybeConfirmAndRunTool(
@@ -399,8 +406,28 @@ async function maybeConfirmAndRunTool(
     }
   }
 
-  if (!tool || tool.sideEffect === "read" || ctx.readonly || options.autoConfirm) {
+  // Auto-approve based on permission mode
+  if (tool && shouldAutoApproveTool(tool.sideEffect, ctx.permissionMode)) {
+    // Even in auto-approve mode, check for sensitive paths and delete commands
+    const hasDelete = action.tool === "shell" && shellCommandIsDelete(action);
+    if (tool.sideEffect !== "read" && (isWriteTargetingSensitivePath(action) || hasDelete)) {
+      // Fall through to confirmation
+    } else {
+      return runRegisteredTool(availableTools, action.tool, action.input, ctx);
+    }
+  }
+
+  if (!tool || tool.sideEffect === "read" || ctx.readonly) {
     return runRegisteredTool(availableTools, action.tool, action.input, ctx);
+  }
+
+  if (shouldAutoDenyConfirmation(ctx.permissionMode)) {
+    return toolFailure({
+      content: `Permission mode dontAsk auto-denied tool call ${tool?.name ?? action.tool}.`,
+      errorCode: "CONFIRMATION_AUTO_DENIED",
+      retryable: false,
+      metadata: { toolName: tool?.name ?? action.tool, sideEffect: tool?.sideEffect, input: action.input }
+    });
   }
 
   const request = await buildToolConfirmationRequest(tool, action.input, ctx);
@@ -418,1030 +445,19 @@ async function maybeConfirmAndRunTool(
   return runRegisteredTool(availableTools, action.tool, action.input, ctx);
 }
 
-export function maybeBlockByStageBudget(
-  action: AgentActionOutput,
-  userTask: string,
-  step: number,
-  maxSteps: number,
-  workflow: EditWorkflowState,
-  history: AgentHistoryItem[] = []
-): ToolResult | undefined {
-  if (!isCodingChangeTask(userTask)) {
-    const analysisExplorationTools = new Set([...explorationToolNames(), "shell"]);
-    const isMcpTool = action.tool.startsWith("mcp_");
-    const consecutiveAnalysis = countConsecutiveExplorationTurns(history, analysisExplorationTools);
-    const totalAnalysisExplore = consecutiveAnalysis + (isMcpTool || explorationToolNames().has(action.tool) ? 1 : 0);
-    if (totalAnalysisExplore >= 4 && (explorationToolNames().has(action.tool) || isMcpTool || action.tool === "shell")) {
-      return toolFailure({
-        content:
-          "You've gathered information for several turns in a row. Stop exploring or searching now; provide a final answer based on the evidence already collected.",
-        errorCode: "ANALYSIS_EXPLORATION_LIMIT",
-        retryable: true,
-        metadata: { step, maxSteps, toolName: action.tool }
-      });
-    }
-    return undefined;
-  }
-
-  const navigation = navigateWorkflow(userTask, workflow, history, step, maxSteps);
-  const actionIntent = classifyActionIntent(action);
-  const editFailureRecovery = detectEditFailureRecoveryInspection(action, history);
-
-  if (taskRequestsEditPlanFirst(userTask) && !workflow.plan && action.tool !== "editPlan") {
-    return toolFailure({
-      content:
-        "The user explicitly requested calling editPlan first. Call editPlan now with a concise summary, expectedFiles, and steps before any further inspection or edits.",
-      errorCode: "EDIT_PLAN_REQUIRED_FIRST",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  if (workflow.plan && action.tool === "editPlan") {
-    return toolFailure({
-      content:
-        "An edit plan already exists. Do not recreate the plan; continue with the next concrete edit, verification check, or final answer.",
-      errorCode: "EDIT_PLAN_ALREADY_EXISTS",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const fakeEdit = detectFakeProgressEdit(action);
-  if (workflow.plan && workflow.changedFiles.length === 0 && fakeEdit) {
-    return toolFailure({
-      content:
-        `${fakeEdit} Do not make temporary, dummy, or no-op edits to bypass exploration limits. Make the real planned code/test edit now, using the last observed line numbers or an exact anchor from history.`,
-      errorCode: "FAKE_PROGRESS_EDIT_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const assertionWeakening = detectTestAssertionWeakening(action, userTask);
-  if (assertionWeakening) {
-    return toolFailure({
-      content: assertionWeakening,
-      errorCode: "TEST_ASSERTION_WEAKENING_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const repeatedFailedEdit = detectRepeatedFailedEditWithoutContext(action, history);
-  if (repeatedFailedEdit) {
-    return toolFailure({
-      content: repeatedFailedEdit,
-      errorCode: "EDIT_CONTEXT_REQUIRED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const repeatedReplaceTextFailure = detectRepeatedReplaceTextFailure(action, history);
-  if (repeatedReplaceTextFailure) {
-    return toolFailure({
-      content: repeatedReplaceTextFailure,
-      errorCode: "REPLACE_TEXT_REPEATED_FAILURE",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const unverifiedLineEdit = detectUnverifiedLineEdit(action, history);
-  if (unverifiedLineEdit) {
-    return toolFailure({
-      content: unverifiedLineEdit,
-      errorCode: "UNVERIFIED_LINE_EDIT_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const shellCommand = action.tool === "shell" ? extractShellCommand(action.input) : undefined;
-  if (shellCommand && isShellFileEditCommand(shellCommand)) {
-    return toolFailure({
-      content:
-        "Shell commands that write workspace files are blocked for code-change tasks. Use replaceLines, insertAtLine, appendToFile, replaceText, insertText, applyPatch, or writeFile so edits are tracked in the workflow.",
-      errorCode: "SHELL_FILE_EDIT_BLOCKED",
-      retryable: true,
-      metadata: { toolName: action.tool }
-    });
-  }
-
-  if (
-    workflow.changedFiles.length > 0 &&
-    isReadyForFinal(userTask, workflow)
-  ) {
-    return toolFailure({
-      content:
-        "The task is ready for final: a relevant verification check has passed after the latest edit. Do not call more tools or make cosmetic/requirement-satisfying edits; provide the final answer instead.",
-      errorCode: "FINAL_READY_EDIT_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  const latestCheck = latestCheckAfterLatestChange(workflow);
-  if (
-    shellCommand &&
-    latestCheck &&
-    !latestCheck.ok &&
-    normalizeShellCommandForComparison(shellCommand) === normalizeShellCommandForComparison(latestCheck.command)
-  ) {
-    return toolFailure({
-      content:
-        "This same verification command already failed after the latest edit, and no repair edit has been recorded since then. Do not rerun it unchanged. Use the failure output already in history to make a focused repair edit first, then rerun the check.",
-      errorCode: "REDUNDANT_FAILED_CHECK_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool, command: shellCommand }
-    });
-  }
-
-  const riskyImport = detectRiskyPythonTopImport(action);
-  if (riskyImport) {
-    return toolFailure({
-      content:
-        `${riskyImport} Read the top of the Python file if needed, then insert normal imports after any module docstring and from __future__ imports. If the task is about emitting a warning, prefer the project's existing console/logging warning API instead of adding Python's warnings module unless you have verified it is already the local pattern.`,
-      errorCode: "PYTHON_TOP_IMPORT_BLOCKED",
-      retryable: true,
-      metadata: { step, toolName: action.tool }
-    });
-  }
-
-  if (actionIntent === "setup" && !recentVerificationMissingDependency(history)) {
-    return toolFailure({
-      content:
-        "Environment setup/install commands are blocked until a recent verification failure shows a missing test runner or dependency. Run the relevant check first, then install only the missing dependency if needed.",
-      errorCode: "ENV_SETUP_NOT_JUSTIFIED",
-      retryable: true,
-      metadata: { step, maxSteps, toolName: action.tool }
-    });
-  }
-
-  const explorationBudget = navigation.explorationBudget;
-  const editBudget = Math.max(explorationBudget + 2, Math.ceil(maxSteps * 0.65));
-  const broadExploreTools = broadExplorationTools();
-  const explorationTools = explorationToolNames();
-  const isExploration = actionIntent === "inspect";
-  const isTargetedApiLookup = isTargetedConventionLookup(action, userTask);
-  const isBroadRead =
-    action.tool === "readFile" &&
-    (!action.input ||
-      typeof action.input !== "object" ||
-      (!("startLine" in action.input) && !("lineCount" in action.input) && !("offset" in action.input) && !("limit" in action.input)));
-
-  if (
-    workflow.plan &&
-    workflow.changedFiles.length === 0 &&
-    step > explorationBudget &&
-    (broadExploreTools.has(action.tool) || isBroadRead) &&
-    !editFailureRecovery
-  ) {
-    return toolFailure({
-      content:
-        "Exploration budget is over for this code-change task. Use focused search/ranged read if absolutely needed, otherwise make the planned edit with replaceLines, insertAtLine, appendToFile, replaceText, insertText, applyPatch, or writeFile.",
-      errorCode: "EXPLORATION_BUDGET_EXCEEDED",
-      retryable: true,
-      metadata: { step, maxSteps, explorationBudget, toolName: action.tool }
-    });
-  }
-
-  const repeatedExploration = countConsecutiveExplorationTurns(history, explorationTools);
-  if (
-    workflow.plan &&
-    workflow.changedFiles.length === 0 &&
-    isIssueFixTask(userTask) &&
-    countFailedTargetLocationAttempts(history, userTask) >= workflowProfileForTask(userTask, maxSteps).targetMissLimit &&
-    isExploration &&
-    !editFailureRecovery &&
-    !isTargetedApiLookup
-  ) {
-    return toolFailure({
-      content:
-        "The requested issue target has not been located after repeated exact searches. Stop exploring and report that the local checkout may not match the issue/tag, including the missing symbols and the command the user should run to verify or switch versions. Do not keep searching unrelated files.",
-      errorCode: "TARGET_NOT_LOCATED_PRECHECK_FAILED",
-      retryable: true,
-      metadata: { step, maxSteps, toolName: action.tool }
-    });
-  }
-
-  if (
-    workflow.plan &&
-    workflow.changedFiles.length === 0 &&
-    repeatedExploration >= explorationBudget &&
-    isExploration &&
-    !editFailureRecovery &&
-    !isTargetedApiLookup
-  ) {
-    return toolFailure({
-      content:
-        "Repeated exploration is blocked before any files have changed for this code-change task. Do not try another read/search/shell command or add dummy edits to bypass this. Make the real planned edit now with replaceLines, insertAtLine, appendToFile, replaceText, insertText, applyPatch, or writeFile, using the line numbers or anchors already shown in history. If the only missing fact is an API name or project convention, make one targeted search for the exact convention such as warning/logging/error method names.",
-      errorCode: "REPEATED_EXPLORATION_BLOCKED",
-      retryable: true,
-      metadata: { step, maxSteps, explorationBudget, repeatedExploration, toolName: action.tool }
-    });
-  }
-
-  if (
-    workflow.plan &&
-    workflow.changedFiles.length === 0 &&
-    step > explorationBudget + 2 &&
-    isExploration &&
-    !editFailureRecovery &&
-    !isTargetedApiLookup
-  ) {
-    return toolFailure({
-      content:
-        "The pre-edit inspection window is over. Stop reading/searching and make the first real planned edit now, using the line numbers and anchors already shown in history.",
-      errorCode: "PRE_EDIT_EXPLORATION_WINDOW_CLOSED",
-      retryable: true,
-      metadata: { step, maxSteps, explorationBudget, toolName: action.tool }
-    });
-  }
-
-  if (
-    workflow.changedFiles.length > 0 &&
-    workflow.checks.length === 0 &&
-    repeatedExploration >= navigation.postEditExplorationBudget &&
-    isExploration
-  ) {
-    return toolFailure({
-      content:
-        `Repeated exploration after edits is blocked. ${navigation.recommendedAction} Do not keep rereading the same regions.`,
-      errorCode: "POST_EDIT_EXPLORATION_BLOCKED",
-      retryable: true,
-      metadata: { step, maxSteps, repeatedExploration, toolName: action.tool }
-    });
-  }
-
-  if (workflow.changedFiles.length > 0 && workflow.checks.length === 0 && step >= editBudget && broadExploreTools.has(action.tool)) {
-    return toolFailure({
-      content:
-        "Verification phase has started after file edits. Run a relevant shell check, make a focused repair, or finish with a clear incomplete status if verification is impossible.",
-      errorCode: "VERIFICATION_PHASE_REQUIRED",
-      retryable: true,
-      metadata: { step, maxSteps, editBudget, toolName: action.tool }
-    });
-  }
-
-  const policy = workflowPolicyForNavigation(navigation);
-  if (!policy.allowedIntents.includes(actionIntent) && !isTargetedApiLookup && !editFailureRecovery) {
-    const recentPolicyBlocks = countRecentWorkflowGuardBlocks(history, "STAGE_INTENT_BLOCKED");
-    return toolFailure({
-      content:
-        `${policy.reason} Current workflow stage is "${navigation.stage}". Recommended next action: ${navigation.recommendedAction}\n` +
-        `Allowed action intents now: ${formatAllowedIntentsForPrompt(policy.allowedIntents)}.\n` +
-        (recentPolicyBlocks > 0
-          ? `This is workflow policy violation #${recentPolicyBlocks + 1} in the recent context. Stop trying adjacent tools; choose only an allowed intent next turn.`
-          : "Choose only an allowed intent next turn."),
-      errorCode: "STAGE_INTENT_BLOCKED",
-      retryable: true,
-      metadata: { step, maxSteps, stage: navigation.stage, actionIntent, toolName: action.tool, recentPolicyBlocks }
-    });
-  }
-
-  return undefined;
+function shellCommandIsDelete(action: AgentActionOutput): boolean {
+  const cmd = extractShellCommand(action.input);
+  if (!cmd) return false;
+  const assessment = assessShellCommand(cmd, { shellDenylist: [], allowHighRiskShell: true });
+  return assessment.errorCode === "SHELL_DELETE_WARNING";
 }
 
-export type WorkflowStage = "analysis" | "plan" | "inspect" | "edit" | "repair-or-verify" | "verify" | "final";
-
-export type ActionIntent = "plan" | "inspect" | "edit" | "verify" | "setup" | "other";
-
-export type WorkflowPolicy = {
-  allowedIntents: ActionIntent[];
-  reason: string;
-};
-
-export function workflowPolicyForNavigation(navigation: Pick<WorkflowNavigation, "stage" | "reasons">): WorkflowPolicy {
-  switch (navigation.stage) {
-    case "analysis":
-      return {
-        allowedIntents: ["plan", "inspect", "edit", "verify", "setup", "other"],
-        reason: "No coding workflow restrictions apply yet."
-      };
-    case "plan":
-      if (navigation.reasons.some((reason) => /explicitly requested editPlan/i.test(reason))) {
-        return {
-          allowedIntents: ["plan"],
-          reason: "The user explicitly requested editPlan first, so planning is the only allowed action."
-        };
-      }
-      return {
-        allowedIntents: ["plan", "inspect"],
-        reason: "Before editing, the workflow only allows creating the edit plan or focused inspection."
-      };
-    case "inspect":
-      return {
-        allowedIntents: ["inspect", "edit", "verify"],
-        reason: "Inspection is open, but unrelated shell/actions are not part of the coding workflow."
-      };
-    case "edit":
-      return {
-        allowedIntents: ["edit", "verify", "setup"],
-        reason: "The inspection budget is spent; the workflow requires a real edit, one focused verification run, or justified environment setup."
-      };
-    case "repair-or-verify":
-      return {
-        allowedIntents: ["inspect", "edit", "verify", "setup"],
-        reason: "After edits, only focused inspection, repair edits, or verification are allowed."
-      };
-    case "verify":
-      return {
-        allowedIntents: ["edit", "verify", "setup"],
-        reason: "The workflow is in verification; run the relevant check or make a repair edit."
-      };
-    case "final":
-      return {
-        allowedIntents: [],
-        reason: "The workflow is complete and should produce final instead of calling tools."
-      };
-  }
-}
-
-export function formatAllowedIntentsForPrompt(intents: ActionIntent[]): string {
-  if (intents.length === 0) {
-    return "none; output final instead of calling tools";
-  }
-
-  const descriptions: Record<ActionIntent, string> = {
-    plan: "plan=editPlan",
-    inspect: "inspect=focused read/search/git status only",
-    edit: "edit=replaceLines/insertAtLine/replaceText/insertText/applyPatch",
-    verify: "verify=pytest/typecheck/py_compile/test command",
-    setup: "setup=install/sync only after missing dependency failure",
-    other: "other=non-file/non-workflow action"
-  };
-  return intents.map((intent) => descriptions[intent]).join("; ");
-}
-
-export function classifyActionIntent(action: AgentActionOutput): ActionIntent {
-  if (action.tool === "editPlan") {
-    return "plan";
-  }
-
-  if (requiresEditPlan(action.tool)) {
-    return "edit";
-  }
-
-  if (action.tool === "shell") {
-    const command = extractShellCommand(action.input);
-    if (!command) {
-      return "other";
-    }
-    if (isShellFileEditCommand(command)) {
-      return "edit";
-    }
-    if (isShellEnvironmentSetupCommand(command)) {
-      return "setup";
-    }
-    if (isShellVerificationCommand(command)) {
-      return "verify";
-    }
-    if (isShellFileReadCommand(command)) {
-      return "inspect";
-    }
-    return "other";
-  }
-
-  if (explorationToolNames().has(action.tool)) {
-    return "inspect";
-  }
-
-  return "other";
-}
-
-export type WorkflowNavigation = {
-  stage: WorkflowStage;
-  recommendedAction: string;
-  blockedActions: string[];
-  reasons: string[];
-  explorationBudget: number;
-  postEditExplorationBudget: number;
-  repeatedExploration: number;
-};
-
-export type WorkflowProfile = {
-  kind: "generic" | "issue-fix";
-  explorationBudget: number;
-  postEditExplorationBudget: number;
-  targetMissLimit: number;
-};
-
-export function workflowProfileForTask(userTask: string, maxSteps: number): WorkflowProfile {
-  if (isIssueFixTask(userTask)) {
-    return {
-      kind: "issue-fix",
-      explorationBudget: taskRequestsEditPlanFirst(userTask) ? 7 : 5,
-      postEditExplorationBudget: 2,
-      targetMissLimit: 2
-    };
-  }
-
-  return {
-    kind: "generic",
-    explorationBudget: taskRequestsEditPlanFirst(userTask) ? 6 : Math.min(6, Math.max(4, Math.ceil(maxSteps * 0.12))),
-    postEditExplorationBudget: 4,
-    targetMissLimit: 3
-  };
-}
-
-export function issueFixPromptHints(userTask: string): string[] {
-  if (!isIssueFixTask(userTask)) {
-    return [];
-  }
-
-  const hints: string[] = [];
-  const targets = extractIssueTargetTokens(userTask);
-  const testPath = extractMentionedTestPath(userTask);
-  const classMethod = extractMentionedClassMethod(userTask);
-  const testFunction = targets.find((target) => /^test_[A-Za-z0-9_]+$/.test(target));
-
-  if (targets.length > 0) {
-    hints.push(`Exact target symbols: ${targets.join(", ")}`);
-  }
-
-  if (testPath && classMethod) {
-    hints.push(`Targeted pytest candidate: python -m pytest ${testPath}::${classMethod.className}::${classMethod.methodName} -q`);
-  } else if (testPath && testFunction) {
-    hints.push(`Targeted pytest candidate: python -m pytest ${testPath}::${testFunction} -q`);
-  } else if (classMethod) {
-    hints.push(`Targeted pytest candidate: python -m pytest -k "${classMethod.className} and ${classMethod.methodName}" -q`);
-  } else if (testFunction) {
-    hints.push(`Targeted pytest candidate: python -m pytest -k "${testFunction}" -q`);
-  }
-
-  return hints;
-}
-
-export function navigateWorkflow(
-  userTask: string,
-  workflow: Pick<EditWorkflowState, "plan" | "changedFiles" | "checks">,
-  history: AgentHistoryItem[] = [],
-  step = 1,
-  maxSteps = 10
-): WorkflowNavigation {
-  const profile = workflowProfileForTask(userTask, maxSteps);
-  const explorationBudget = profile.explorationBudget;
-  const afterEditBudget = profile.postEditExplorationBudget;
-  const repeatedExploration = countConsecutiveExplorationTurns(history, explorationToolNames());
-  const reasons: string[] = [];
-
-  if (!isCodingChangeTask(userTask)) {
-    return {
-      stage: "analysis",
-      recommendedAction: "Gather only the evidence needed, then answer directly.",
-      blockedActions: [],
-      reasons: ["The user task does not appear to require code changes."],
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  if (!workflow.plan) {
-    if (taskRequestsEditPlanFirst(userTask)) {
-      reasons.push("The user explicitly requested editPlan before other work.");
-      return {
-        stage: "plan",
-        recommendedAction: "Call editPlan now with concise expectedFiles and implementation steps.",
-        blockedActions: ["readFile", "searchText", "projectScan", "tree", "listDir", "shell", "final"],
-        reasons,
-        explorationBudget,
-        postEditExplorationBudget: afterEditBudget,
-        repeatedExploration
-      };
-    }
-
-    reasons.push("No edit plan has been recorded for this code-change task.");
-    return {
-      stage: "plan",
-      recommendedAction: "Do one focused inspection if needed, then call editPlan before editing.",
-      blockedActions: ["final"],
-      reasons,
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  if (workflow.changedFiles.length === 0) {
-    if (repeatedExploration >= explorationBudget || step > explorationBudget) {
-      reasons.push("The pre-edit exploration budget has been spent and no file changes are recorded.");
-      return {
-        stage: "edit",
-        recommendedAction:
-          "Make the first real planned edit now with replaceLines, insertAtLine, appendToFile, replaceText, insertText, applyPatch, or writeFile.",
-        blockedActions: ["projectScan", "tree", "listDir", "readFile", "searchText", "readTail", "fileExists", "recall", "final"],
-        reasons,
-        explorationBudget,
-        postEditExplorationBudget: afterEditBudget,
-        repeatedExploration
-      };
-    }
-
-    reasons.push("An edit plan exists, but no files have changed yet.");
-    return {
-      stage: "inspect",
-      recommendedAction: `Use only focused search/ranged reads, then edit before ${explorationBudget} consecutive inspection turns.`,
-      blockedActions: ["projectScan", "tree", "listDir", "final"],
-      reasons,
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  if (workflow.checks.length === 0) {
-    if (repeatedExploration >= afterEditBudget) {
-      reasons.push("Files have changed, but post-edit inspection is repeating without verification.");
-      return {
-        stage: "verify",
-        recommendedAction: "Run the relevant pytest/check command now, or make one focused repair edit if the defect is already clear.",
-        blockedActions: ["projectScan", "tree", "listDir", "readFile", "searchText", "readTail", "fileExists", "recall"],
-        reasons,
-        explorationBudget,
-        postEditExplorationBudget: afterEditBudget,
-        repeatedExploration
-      };
-    }
-
-    reasons.push("Files have changed and no verification check has run yet.");
-    return {
-      stage: "repair-or-verify",
-      recommendedAction: "Prefer running the relevant check now; inspect only if a very small missing context is needed.",
-      blockedActions: ["projectScan", "tree", "listDir"],
-      reasons,
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  const latestCheck = latestCheckAfterLatestChange({
-    runId: "navigation",
-    changedFiles: workflow.changedFiles,
-    checks: workflow.checks,
-    plan: workflow.plan
-  });
-  if (latestCheck && !latestCheck.ok) {
-    reasons.push("The latest verification after edits failed.");
-    return {
-      stage: "repair-or-verify",
-      recommendedAction: "Repair the failing behavior directly, then rerun the failed check.",
-      blockedActions: ["projectScan", "tree", "listDir", "final"],
-      reasons,
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  if (isReadyForFinal(userTask, workflow)) {
-    reasons.push("A verification check passed after the latest recorded edit.");
-    return {
-      stage: "final",
-      recommendedAction: "Finish with a concise final answer in the user's requested language.",
-      blockedActions: ["projectScan", "tree", "listDir", "readFile", "searchText", "shell"],
-      reasons,
-      explorationBudget,
-      postEditExplorationBudget: afterEditBudget,
-      repeatedExploration
-    };
-  }
-
-  reasons.push("Checks exist, but none are known to have passed after the latest edit.");
-  return {
-    stage: "verify",
-    recommendedAction: "Run or rerun the most relevant verification command before final.",
-    blockedActions: ["projectScan", "tree", "listDir", "final"],
-    reasons,
-    explorationBudget,
-    postEditExplorationBudget: afterEditBudget,
-    repeatedExploration
-  };
-}
-
-function taskRequestsEditPlanFirst(userTask: string): boolean {
-  return /\beditPlan\b/.test(userTask);
-}
-
-function detectFakeProgressEdit(action: AgentActionOutput): string | undefined {
-  if (!action.input || typeof action.input !== "object") {
-    return undefined;
-  }
-
+function isWriteTargetingSensitivePath(action: AgentActionOutput): boolean {
+  if (!action.input || typeof action.input !== "object") return false;
   const input = action.input as Record<string, unknown>;
-  if (action.tool === "replaceText" && typeof input.search === "string" && input.search === input.replacement) {
-    return "This replaceText call would not change the file.";
-  }
-
-  const content = typeof input.content === "string" ? input.content : "";
-  if (!["appendFile", "appendToFile", "insertText", "insertAtLine", "replaceLines", "writeFile"].includes(action.tool)) {
-    return undefined;
-  }
-
-  const normalized = content.toLowerCase();
-  if (/\b(dummy|temporary|temp|unblock|bypass|exploration|harmless comment)\b/.test(normalized)) {
-    return "This edit appears to be temporary or intended only to unblock exploration.";
-  }
-
-  return undefined;
-}
-
-function detectTestAssertionWeakening(action: AgentActionOutput, userTask: string): string | undefined {
-  if (!isIssueFixTask(userTask) || !action.input || typeof action.input !== "object") {
-    return undefined;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  const path = typeof input.path === "string" ? input.path.replaceAll("\\", "/") : "";
-  if (!/(^|\/)tests?\//.test(path) && !/(^|\/)test_[^/]+\.py$/.test(path) && !/(^|\/)[^/]+_test\.py$/.test(path)) {
-    return undefined;
-  }
-
-  const search = typeof input.search === "string" ? input.search : "";
-  const replacement = typeof input.replacement === "string" ? input.replacement : typeof input.content === "string" ? input.content : "";
-  const removesAssertion = /\b(assert|AssertionError|pytest\.raises|self\.assert[A-Z]\w*)\b/.test(search);
-  const keepsAssertion = /\b(assert|AssertionError|pytest\.raises|self\.assert[A-Z]\w*)\b/.test(replacement);
-  const commentOnly = replacement
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .every((line) => line.startsWith("#"));
-
-  if (removesAssertion && (!keepsAssertion || commentOnly)) {
-    return "This edit weakens or removes a test assertion for an issue-fix task. Fix the behavior under test or replace the assertion with an equivalent stronger check; do not make tests pass by deleting the oracle.";
-  }
-
-  return undefined;
-}
-
-function detectRepeatedFailedEditWithoutContext(action: AgentActionOutput, history: AgentHistoryItem[]): string | undefined {
-  const path = extractEditPath(action);
-  if (!path) {
-    return undefined;
-  }
-
-  const recent = history.slice(-10);
-  const failedEditCount = recent.filter((item) => {
-    if (extractEditPath(item.action) !== path) {
-      return false;
-    }
-    return /\b(TEXT_NOT_FOUND|UNVERIFIED_LINE_EDIT_BLOCKED|PYTHON_TOP_IMPORT_BLOCKED|FAKE_PROGRESS_EDIT_BLOCKED)\b/.test(item.observation);
-  }).length;
-
-  if (failedEditCount < 2 || hasSuccessfulRecentReadOfPath(recent, path)) {
-    return undefined;
-  }
-
-  return `Recent edit attempts against ${path} failed because the current context was not anchored. Do not try another edit on that file yet; first read a focused range or search an exact symbol in ${path}, then make one anchored edit.`;
-}
-
-function detectRepeatedReplaceTextFailure(action: AgentActionOutput, history: AgentHistoryItem[]): string | undefined {
-  if (action.tool !== "replaceText") {
-    return undefined;
-  }
-
-  const path = extractEditPath(action);
-  if (!path) {
-    return undefined;
-  }
-
-  const recent = history.slice(-12);
-  let failedCount = 0;
-  for (const item of recent) {
-    if (item.action.tool !== "replaceText") {
-      continue;
-    }
-    if (extractEditPath(item.action) !== path) {
-      continue;
-    }
-    if (/\bTEXT_NOT_FOUND\b/.test(item.observation)) {
-      failedCount += 1;
-    }
-  }
-
-  if (failedCount < 3) {
-    return undefined;
-  }
-
-  return (
-    `You've tried replaceText on ${path} ${failedCount} times in recent history and all failed with TEXT_NOT_FOUND. ` +
-    `The search patterns you are providing do not match the current file content. ` +
-    `Read a focused range of the file (using startLine/lineCount) to get exact line numbers, ` +
-    `then use replaceLines instead.`
-  );
-}
-
-function detectEditFailureRecoveryInspection(action: AgentActionOutput, history: AgentHistoryItem[]): boolean {
-  if (!["readFile", "searchText"].includes(action.tool) || !action.input || typeof action.input !== "object") {
-    return false;
-  }
-
-  const failedPath = latestFailedEditPath(history);
-  if (!failedPath) {
-    return false;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  if (action.tool === "readFile") {
-    const path = typeof input.path === "string" ? normalizeProjectPath(input.path) : "";
-    const hasRange = "startLine" in input || "lineCount" in input || "offset" in input || "limit" in input;
-    return path === failedPath && hasRange;
-  }
-
-  const root = typeof input.root === "string" ? normalizeProjectPath(input.root) : "";
-  const pattern = typeof input.pattern === "string" ? input.pattern.trim() : "";
-  return pattern.length >= 3 && (root === failedPath || root === "." || root === "");
-}
-
-function latestFailedEditPath(history: AgentHistoryItem[]): string | undefined {
-  for (const item of history.slice(-8).reverse()) {
-    const path = extractEditPath(item.action);
-    if (path && /\b(TEXT_NOT_FOUND|UNVERIFIED_LINE_EDIT_BLOCKED|EDIT_CONTEXT_REQUIRED)\b/.test(item.observation)) {
-      return path;
-    }
-  }
-  return undefined;
-}
-
-function extractEditPath(action: AgentActionOutput): string | undefined {
-  if (
-    !["writeFile", "appendFile", "appendToFile", "replaceText", "insertText", "replaceLines", "insertAtLine"].includes(action.tool) ||
-    !action.input ||
-    typeof action.input !== "object"
-  ) {
-    return undefined;
-  }
-
-  const path = (action.input as Record<string, unknown>).path;
-  return typeof path === "string" ? normalizeProjectPath(path) : undefined;
-}
-
-function hasSuccessfulRecentReadOfPath(history: AgentHistoryItem[], path: string): boolean {
-  return history.some((item) => {
-    if (item.action.tool !== "readFile" || !item.action.input || typeof item.action.input !== "object") {
-      return false;
-    }
-    if (/\[tool_error\]|code:\s*[A-Z_]+/i.test(item.observation)) {
-      return false;
-    }
-    const readPath = (item.action.input as Record<string, unknown>).path;
-    return typeof readPath === "string" && normalizeProjectPath(readPath) === path;
-  });
-}
-
-function detectUnverifiedLineEdit(action: AgentActionOutput, history: AgentHistoryItem[]): string | undefined {
-  if (!["replaceLines", "insertAtLine"].includes(action.tool) || !action.input || typeof action.input !== "object") {
-    return undefined;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  const path = typeof input.path === "string" ? normalizeProjectPath(input.path) : "";
-  const lineValue = action.tool === "replaceLines" ? input.startLine : input.line;
-  const line = typeof lineValue === "number" ? lineValue : Number(lineValue);
-  if (!path || !Number.isFinite(line) || line < 120) {
-    return undefined;
-  }
-
-  if (hasRecentLineContext(history, path, line)) {
-    return undefined;
-  }
-
-  return `This ${action.tool} targets ${path}:${line}, but that line range has not been read successfully in recent history. Do not guess high line numbers; read a focused range around the target line or use an exact text replacement/patch anchor first.`;
-}
-
-function hasRecentLineContext(history: AgentHistoryItem[], path: string, line: number): boolean {
-  return history.slice(-12).some((item) => {
-    if (item.action.tool !== "readFile" || !item.action.input || typeof item.action.input !== "object") {
-      return false;
-    }
-    if (/\[tool_error\]|code:\s*[A-Z_]+/i.test(item.observation)) {
-      return false;
-    }
-
-    const input = item.action.input as Record<string, unknown>;
-    const readPath = typeof input.path === "string" ? normalizeProjectPath(input.path) : "";
-    if (readPath !== path) {
-      return false;
-    }
-
-    const startValue = input.startLine ?? input.offset;
-    const countValue = input.lineCount ?? input.limit;
-    const startLine = typeof startValue === "number" ? startValue : Number(startValue);
-    const lineCount = typeof countValue === "number" ? countValue : Number(countValue);
-    if (!Number.isFinite(startLine) || !Number.isFinite(lineCount) || lineCount <= 0) {
-      return false;
-    }
-
-    const endLine = startLine + lineCount - 1;
-    return line >= startLine - 2 && line <= endLine + 2;
-  });
-}
-
-function detectRiskyPythonTopImport(action: AgentActionOutput): string | undefined {
-  if (action.tool !== "insertAtLine" || !action.input || typeof action.input !== "object") {
-    return undefined;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  const path = typeof input.path === "string" ? input.path : "";
-  const line = typeof input.line === "number" ? input.line : Number(input.line);
-  const content = typeof input.content === "string" ? input.content.trimStart() : "";
-  if (!path.endsWith(".py") || line !== 1 || !/^import\s+|^from\s+(?!__future__\b)/.test(content)) {
-    return undefined;
-  }
-
-  return "This insertAtLine call would add a normal import at the first line of a Python file, which can break files that start with a module docstring or from __future__ imports.";
-}
-
-function isTargetedConventionLookup(action: AgentActionOutput, userTask: string): boolean {
-  if (!/\b(warn|warning|log|logging|error|diagnostic)\b/i.test(userTask)) {
-    return false;
-  }
-  if (action.tool !== "searchText" || !action.input || typeof action.input !== "object") {
-    return false;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  const pattern = typeof input.pattern === "string" ? input.pattern : "";
-  const root = typeof input.root === "string" ? input.root.replaceAll("\\", "/") : "";
-  const isConventionPattern = /\b(warn|warning|console\.warning|logger|logging|def warning|def warn)\b/i.test(pattern);
-  const isFocusedRoot =
-    root.length > 0 &&
-    root !== "." &&
-    !root.endsWith("/") &&
-    !/\b(node_modules|\.git|dist|build|site-packages)\b/.test(root);
-  return isConventionPattern && isFocusedRoot;
-}
-
-function isIssueFixTask(userTask: string): boolean {
-  return /\bissue\s*#?\d+\b|#[0-9]{2,}\b/i.test(userTask);
-}
-
-function countFailedTargetLocationAttempts(history: AgentHistoryItem[], userTask: string): number {
-  const targets = extractIssueTargetTokens(userTask);
-  if (targets.length === 0) {
-    return 0;
-  }
-
-  let attempts = 0;
-  for (const item of history) {
-    if (classifyActionIntent(item.action) !== "inspect") {
-      continue;
-    }
-    const actionText = `${item.action.thought} ${formatActionInputForPrompt(item.action, 1200)}`;
-    if (!targets.some((target) => actionText.includes(target))) {
-      continue;
-    }
-    if (looksLikeNoSearchResults(item.observation)) {
-      attempts += 1;
-    }
-  }
-  return attempts;
-}
-
-function extractIssueTargetTokens(userTask: string): string[] {
-  const tokens = new Set<string>();
-
-  for (const match of userTask.matchAll(/`([^`]{3,120})`/g)) {
-    tokens.add(match[1]);
-  }
-  for (const match of userTask.matchAll(/\b[A-Z][A-Za-z0-9_]*(?:TestCase|Test|Case)\.test_[A-Za-z0-9_]+\b/g)) {
-    tokens.add(match[0]);
-  }
-  for (const match of userTask.matchAll(/\btest_[A-Za-z0-9_]{3,}\b/g)) {
-    const after = userTask.slice((match.index ?? 0) + match[0].length, (match.index ?? 0) + match[0].length + 3);
-    if (after.startsWith(".py")) {
-      continue;
-    }
-    tokens.add(match[0]);
-  }
-  for (const match of userTask.matchAll(/\b[A-Z][A-Za-z0-9_]*(?:TestCase|Test|Case|Spider|Middleware|Fixture|Fixtures)\b/g)) {
-    tokens.add(match[0]);
-  }
-
-  return [...tokens].filter((token) => !/\s/.test(token));
-}
-
-function extractMentionedTestPath(userTask: string): string | undefined {
-  const match = /(?:^|\s|`)((?:[A-Za-z]:)?[A-Za-z0-9_.\-\/\\]*test[A-Za-z0-9_.\-\/\\]*\.py)(?:`|\s|$|:)/i.exec(userTask);
-  return match?.[1]?.replaceAll("\\", "/");
-}
-
-function extractMentionedClassMethod(userTask: string): { className: string; methodName: string } | undefined {
-  const match = /\b([A-Z][A-Za-z0-9_]*(?:TestCase|Test|Case))\.(test_[A-Za-z0-9_]+)\b/.exec(userTask);
-  if (!match) {
-    return undefined;
-  }
-  return { className: match[1], methodName: match[2] };
-}
-
-function looksLikeNoSearchResults(observation: string): boolean {
-  return /no matches|no results|0 results|not found|未找到|没有找到|"stdout"\s*:\s*""|"exitCode"\s*:\s*1/i.test(observation);
-}
-
-function countRecentWorkflowGuardBlocks(history: AgentHistoryItem[], errorCode?: string): number {
-  let count = 0;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const observation = history[index].observation;
-    if (!/code:\s*[A-Z_]+|errorCode["']?\s*[:=]\s*["']?[A-Z_]+/i.test(observation)) {
-      break;
-    }
-    if (!errorCode || observation.includes(errorCode)) {
-      count += 1;
-      continue;
-    }
-    break;
-  }
-  return count;
-}
-
-function recentVerificationMissingDependency(history: AgentHistoryItem[]): boolean {
-  return history
-    .slice(-14)
-    .some(
-      (item) =>
-        classifyActionIntent(item.action) === "verify" &&
-        /no module named|modulenotfounderror|importerror|pytest['"]?\s*(?:is not recognized|not found)|no module named pytest/i.test(
-          item.observation
-        )
-    );
-}
-
-function isReadyForFinal(
-  userTask: string,
-  workflow: Pick<EditWorkflowState, "plan" | "changedFiles" | "checks">
-): boolean {
-  if (!hasPassingCheckAfterLatestChangeForCompletion(workflow)) {
-    return false;
-  }
-
-  const latestCheck = latestCheckAfterLatestChange({
-    runId: "readiness",
-    plan: workflow.plan,
-    changedFiles: workflow.changedFiles,
-    checks: workflow.checks
-  });
-  if (latestCheck && !latestCheck.ok) {
-    return false;
-  }
-
-  if (taskRequiresPytest(userTask) && !hasPassingCheckAfterLatestChange(workflow, (command) => /\bpytest\b/i.test(command))) {
-    return false;
-  }
-
-  return true;
-}
-
-function normalizeShellCommandForComparison(command: string): string {
-  return command.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function explorationBudgetBeforeFirstEdit(userTask: string, maxSteps: number): number {
-  if (taskRequestsEditPlanFirst(userTask)) {
-    return 6;
-  }
-
-  return Math.min(6, Math.max(4, Math.ceil(maxSteps * 0.12)));
-}
-
-function postEditExplorationBudget(): number {
-  return 4;
-}
-
-function broadExplorationTools(): Set<string> {
-  return new Set(["projectScan", "tree", "listDir"]);
-}
-
-function explorationToolNames(): Set<string> {
-  return new Set(["projectScan", "tree", "listDir", "searchText", "readFile", "readTail", "fileExists", "recall"]);
-}
-
-function countConsecutiveExplorationTurns(history: AgentHistoryItem[], explorationTools: Set<string>): number {
-  let count = 0;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const item = history[index];
-    if (!isExplorationAction(item.action, explorationTools)) {
-      break;
-    }
-    count += 1;
-  }
-  return count;
-}
-
-function isExplorationAction(action: AgentActionOutput, explorationTools: Set<string>): boolean {
-  if (explorationTools.has(action.tool)) {
-    return true;
-  }
-
-  if (action.tool !== "shell") {
-    return false;
-  }
-
-  const command = extractShellCommand(action.input);
-  return command ? isShellFileReadCommand(command) && !isShellVerificationCommand(command) : false;
+  const path = typeof input.path === "string" ? input.path : undefined;
+  if (!path) return false;
+  return isSensitivePath(path);
 }
 
 async function buildProjectContext(cwd: string, memoryDir: string): Promise<ProjectContextInfo> {
@@ -1466,23 +482,7 @@ export function shouldRequireEditsBeforeFinal(userTask: string, state: Pick<Edit
   return isCodingChangeTask(userTask);
 }
 
-export function isCodingChangeTask(userTask: string): boolean {
-  const chineseKeywords = [
-    "\u4fee\u590d",
-    "\u4fee\u6539",
-    "\u5b9e\u73b0",
-    "\u6dfb\u52a0",
-    "\u65b0\u589e",
-    "\u66f4\u65b0",
-    "\u8865\u5145",
-    "\u5b8c\u5584",
-    "\u89e3\u51b3"
-  ];
-  if (chineseKeywords.some((keyword) => userTask.includes(keyword))) {
-    return true;
-  }
-  return /\b(fix|repair|implement|add|update|modify|change|patch|resolve)\b/i.test(userTask);
-}
+// isCodingChangeTask imported from workflow-guard.ts
 
 async function recordEditWorkflowEffect(
   editWorkflow: EditWorkflowStore,
@@ -1715,12 +715,6 @@ function normalizeProjectPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
-export type DuplicatePythonTestFunction = {
-  path: string;
-  name: string;
-  lines: number[];
-};
-
 async function getDuplicatePythonTestFunctions(cwd: string, changedFiles: string[]): Promise<DuplicatePythonTestFunction[]> {
   const uniqueTestFiles = [
     ...new Set(changedFiles.map((item) => normalizeProjectPath(item)).filter((item) => isPythonTestPath(item)))
@@ -1790,40 +784,6 @@ function hasPassingCheckAfterLatestChange(
 
 function taskRequiresPytest(userTask: string): boolean {
   return /\bpytest\b/i.test(userTask);
-}
-
-export function answerLooksIncomplete(answer: string): boolean {
-  const patterns = [
-    /\u5f85\u5b8c\u6210/,
-    /\u672a\u5b8c\u6210/,
-    /\u5c1a\u672a/,
-    /\u6ca1\u6709\u8fd0\u884c/,
-    /\u672a\u8fd0\u884c/,
-    /\u672a\u6267\u884c/,
-    /\u65e0\u6cd5\u8fd0\u884c/,
-    /\u672a\u80fd\u5b8c\u6210/,
-    /\u9a8c\u8bc1\u5efa\u8bae/,
-    /\u7531\u4e8e.*\u73af\u5883.*\u672a/,
-    /\u9700\u8981\u624b\u52a8/,
-    /\u624b\u52a8\u5220\u9664/,
-    /\u90e8\u5206\u4fee\u6539/,
-    /\u5efa\u8bae\u4e0b\u4e00\u6b65/,
-    /\u9884\u671f\u901a\u8fc7/,
-    /\u9884\u8ba1\u901a\u8fc7/,
-    /incomplete/i,
-    /not complete/i,
-    /not completed/i,
-    /unable to run/i,
-    /expected to pass/i,
-    /should pass/i,
-    /still need/i,
-    /needs? manual/i,
-    /manual follow-up/i,
-    /todo/i,
-    /remaining task/i,
-    /checks?: none run/i
-  ];
-  return patterns.some((pattern) => pattern.test(answer));
 }
 
 async function getGitDiffSummary(cwd: string): Promise<string | undefined> {
@@ -1950,88 +910,6 @@ Protocol:
 `;
 }
 
-export function formatActionInputForPrompt(action: AgentActionOutput, maxChars = 700): string {
-  const input = normalizeActionInputForPrompt(action);
-  return summarizeText(JSON.stringify(input), maxChars);
-}
-
-function normalizeActionInputForPrompt(action: AgentActionOutput): unknown {
-  if (action.tool !== "shell" || !action.input || typeof action.input !== "object" || !("command" in action.input)) {
-    return action.input;
-  }
-
-  const input = action.input as Record<string, unknown>;
-  const command = typeof input.command === "string" ? input.command : "";
-  return {
-    ...input,
-    command:
-      command.length > 500
-        ? `${command.slice(0, 320)}\n...\n[command compressed: ${command.length} chars]\n...\n${command.slice(-120)}`
-        : command
-  };
-}
-
-export function isShellFileEditCommand(command: string): boolean {
-  const normalized = command.replace(/\s+/g, " ").toLowerCase();
-  const fileWritePatterns = [
-    /(?:^|[^0-9])>>?\s*(?!&)[^|\s]+/,
-    /\b(set-content|add-content|out-file|new-item)\b/,
-    /\bpython(?:3)?\b.*\bopen\s*\([^)]*["'](?:w|a|x|wb|ab|w\+|a\+)["']/,
-    /\bpython(?:3)?\b.*\b(write_text|write_bytes|writelines)\s*\(/,
-    /\bnode\b.*\b(writefilesync|appendfilesync|writefile|appendfile)\s*\(/,
-    /\bperl\b.*\b-i\b/,
-    /\bsed\b.*\b-i\b/
-  ];
-  return fileWritePatterns.some((pattern) => pattern.test(normalized));
-}
-
-export function isShellFileReadCommand(command: string): boolean {
-  if (isShellFileEditCommand(command)) {
-    return false;
-  }
-
-  const normalized = command.replace(/\s+/g, " ").toLowerCase();
-  const fileReadPatterns = [
-    /\b(get-content|gc|type|cat|more|select-string|findstr|grep|rg)\b/,
-    /\bgit\s+(status|diff|show|log|grep|ls-files|rev-parse|branch)\b/,
-    /\bpython(?:3)?\b.*\bopen\s*\([^)]*\)\s*\.\s*(read|readline|readlines)\s*\(/,
-    /\bpython(?:3)?\b.*\b(readlines|read_text)\s*\(/,
-    /\bnode\b.*\b(readfilesync|readfile)\s*\(/,
-    /\bhead\b/,
-    /\btail\b/
-  ];
-  return fileReadPatterns.some((pattern) => pattern.test(normalized));
-}
-
-export function isShellEnvironmentSetupCommand(command: string): boolean {
-  const normalized = command.replace(/\s+/g, " ").toLowerCase();
-  const setupPatterns = [
-    /(?:^|[\s&])(?:[^\s&|]*\\)?python(?:3)?(?:\.exe)?\s+-m\s+pip\s+install\b/,
-    /\bpip(?:3)?\s+install\b/,
-    /\buv\s+(?:pip\s+install|sync|add)\b/,
-    /\bpoetry\s+install\b/,
-    /\bpdm\s+install\b/,
-    /\bconda\s+install\b/
-  ];
-  return setupPatterns.some((pattern) => pattern.test(normalized));
-}
-
-export function isShellVerificationCommand(command: string): boolean {
-  const normalized = command.replace(/\s+/g, " ").toLowerCase();
-  const verificationPatterns = [
-    /(?:^|[\s&])(?:[^\s&|]*\\)?python(?:3)?(?:\.exe)?\s+-m\s+pytest\b/,
-    /(?:^|[\s&])(?:[^\s&|]*\\)?python(?:3)?(?:\.exe)?\s+-m\s+twisted\.trial\b/,
-    /\btwisted\.trial\b/,
-    /\bpytest\b/,
-    /(?:^|[\s&])(?:[^\s&|]*\\)?python(?:3)?(?:\.exe)?\s+-m\s+(unittest|compileall|mypy|ruff)\b/,
-    /\b(ast\.parse|compile\s*\(|py_compile)\b/,
-    /\b(npm|pnpm|yarn)\s+(run\s+)?(test|typecheck|lint|check)\b/,
-    /\b(tsc|eslint|vitest|jest)\b/,
-    /\bnode\b.*\s--check\b/
-  ];
-  return verificationPatterns.some((pattern) => pattern.test(normalized));
-}
-
 function buildStageGuidance(
   userTask: string,
   options: { finalTurn?: boolean; step?: number; maxSteps?: number; workflowState?: EditWorkflowState; history?: AgentHistoryItem[] }
@@ -2089,206 +967,4 @@ function buildStageGuidance(
   }
 
   return lines.join("\n");
-}
-
-export function parseAgentOutput(raw: string): { ok: true; value: AgentOutput } | { ok: false; error: string } {
-  const candidates = [stripJsonFence(raw.trim()), extractFirstJsonObject(raw)].filter((item): item is string => Boolean(item));
-  let firstError: unknown;
-
-  for (const candidate of candidates) {
-    const parsed = parseJsonWithRepair(candidate);
-    if (!parsed.ok) {
-      firstError ??= parsed.error;
-      continue;
-    }
-
-    try {
-      return { ok: true, value: agentOutputSchema.parse(normalizeAgentOutput(parsed.value)) as AgentActionOutput | AgentFinalOutput };
-    } catch (error) {
-      firstError ??= error;
-    }
-  }
-
-  return { ok: false, error: firstError instanceof Error ? firstError.message : String(firstError ?? "Unable to parse agent output") };
-}
-
-function normalizeAgentOutput(parsed: unknown): unknown {
-  if (!isRecord(parsed) || parsed.type !== "action") {
-    return parsed;
-  }
-
-  const tool = typeof parsed.tool === "string" ? parsed.tool : typeof parsed.action === "string" ? parsed.action : parsed.tool;
-  let input = parsed.input;
-  if (!("input" in parsed)) {
-    const topLevelInput: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!["type", "thought", "tool", "action"].includes(key)) {
-        topLevelInput[key] = value;
-      }
-    }
-    input = topLevelInput;
-  }
-
-  return {
-    type: parsed.type,
-    thought: normalizeActionThought(parsed.thought, String(tool)),
-    tool,
-    input
-  };
-}
-
-function normalizeActionThought(thought: unknown, toolName: string): string {
-  if (typeof thought !== "string" || !thought.trim() || /[\u3400-\u9fff]/.test(thought)) {
-    return `Call ${toolName} for the next workflow step.`;
-  }
-
-  return thought;
-}
-
-function parseJsonWithRepair(text: string): { ok: true; value: unknown } | { ok: false; error: Error } {
-  try {
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch (error) {
-    const repairs = [escapeControlCharactersInsideStrings(text)];
-    repairs.push(repairJsonScalarTrailingQuotes(repairs[0]));
-    const repairedFinal = repairUnterminatedFinalAnswer(repairs[0]);
-    if (repairedFinal) {
-      repairs.push(repairedFinal);
-    }
-    for (const repaired of repairs) {
-      try {
-        return { ok: true, value: JSON.parse(repaired) as unknown };
-      } catch {
-        // Try the next lightweight repair.
-      }
-    }
-    return { ok: false, error: error as Error };
-  }
-}
-
-function repairUnterminatedFinalAnswer(text: string): string | undefined {
-  const marker = '"answer":"';
-  const start = text.indexOf('{"type":"final"');
-  const answerStart = text.indexOf(marker);
-  if (start !== 0 || answerStart === -1) {
-    return undefined;
-  }
-
-  const prefixEnd = answerStart + marker.length;
-  const answer = text.slice(prefixEnd);
-  if (answer.endsWith('"}') || answer.endsWith('"}\n')) {
-    return undefined;
-  }
-
-  const trimmed = answer.replace(/\s*$/, "");
-  const safeAnswer = trimmed.replace(/(?<!\\)"/g, '\\"');
-  return `${text.slice(0, prefixEnd)}${safeAnswer}"}`;
-}
-
-function repairJsonScalarTrailingQuotes(text: string): string {
-  return text
-    .replace(/:\s*(-?\d+(?:\.\d+)?)"(\s*[,}])/g, ":$1$2")
-    .replace(/:\s*(true|false|null)"(\s*[,}])/gi, ":$1$2");
-}
-
-function escapeControlCharactersInsideStrings(text: string): string {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-
-  for (const char of text) {
-    if (escaped) {
-      output += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      output += char;
-      escaped = true;
-      continue;
-    }
-
-    if (char === "\"") {
-      output += char;
-      inString = !inString;
-      continue;
-    }
-
-    if (inString && char === "\n") {
-      output += "\\n";
-      continue;
-    }
-
-    if (inString && char === "\r") {
-      output += "\\r";
-      continue;
-    }
-
-    if (inString && char === "\t") {
-      output += "\\t";
-      continue;
-    }
-
-    output += char;
-  }
-
-  return output;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stripJsonFence(text: string): string {
-  if (!text.startsWith("```")) {
-    return text;
-  }
-  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-}
-
-function extractFirstJsonObject(text: string): string | undefined {
-  const start = text.indexOf("{");
-  if (start === -1) {
-    return undefined;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) {
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(start, index + 1);
-      }
-    }
-  }
-
-  return undefined;
 }

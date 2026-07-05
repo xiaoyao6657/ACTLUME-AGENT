@@ -2,6 +2,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { normalizePermissionMode, parseBoolean } from "./security.js";
+import type { PermissionMode } from "./types.js";
 
 export type CliConfigOverrides = {
   workspace?: string;
@@ -10,6 +12,8 @@ export type CliConfigOverrides = {
   model?: string;
   yes?: boolean;
   mcpConfigPath?: string;
+  permissionMode?: PermissionMode;
+  streaming?: boolean;
 };
 
 export type AppConfig = {
@@ -22,6 +26,8 @@ export type AppConfig = {
   apiKey?: string;
   yes: boolean;
   mcpConfigPath?: string;
+  permissionMode: PermissionMode;
+  streaming: boolean;
   sources: {
     userConfigPath: string;
     projectConfigPath: string;
@@ -40,6 +46,8 @@ type PartialAppConfig = {
   apiKey?: string;
   yes?: boolean;
   mcpConfigPath?: string;
+  permissionMode?: PermissionMode;
+  streaming?: boolean;
 };
 
 const configSchema = z.object({
@@ -51,14 +59,18 @@ const configSchema = z.object({
   baseURL: z.string().min(1).optional(),
   apiKey: z.string().min(1).optional(),
   yes: z.boolean().optional(),
-  mcpConfigPath: z.string().min(1).optional()
+  mcpConfigPath: z.string().min(1).optional(),
+  permissionMode: z.enum(["default", "plan", "acceptEdits", "dontAsk", "bypassPermissions"]).optional(),
+  streaming: z.boolean().optional()
 });
 
-const defaults: Required<Pick<AppConfig, "memoryDir" | "readonly" | "model" | "yes">> = {
+const defaults: Required<Pick<AppConfig, "memoryDir" | "readonly" | "model" | "yes" | "permissionMode" | "streaming">> = {
   memoryDir: ".agent-memory",
   readonly: false,
   model: "gpt-4.1-mini",
-  yes: false
+  yes: false,
+  permissionMode: "default",
+  streaming: false
 };
 
 export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process.cwd()): Promise<AppConfig> {
@@ -76,7 +88,9 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
       readonly: defaults.readonly,
 
       model: defaults.model,
-      yes: defaults.yes
+      yes: defaults.yes,
+      permissionMode: defaults.permissionMode,
+      streaming: defaults.streaming
     },
     envConfig,
     userConfig,
@@ -95,9 +109,10 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
         {
           memoryDir: defaults.memoryDir,
           readonly: defaults.readonly,
-    
           model: defaults.model,
-          yes: defaults.yes
+          yes: defaults.yes,
+          permissionMode: defaults.permissionMode,
+          streaming: defaults.streaming
         },
         envConfig,
         userConfig,
@@ -110,17 +125,20 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
 
   const memoryDir = resolveMemoryDir(workspace, merged.memoryDir ?? defaults.memoryDir);
   const mcpConfigPath = merged.mcpConfigPath ? resolvePath(workspace, merged.mcpConfigPath) : undefined;
+  const permissionMode = merged.permissionMode ?? (merged.yes ? "bypassPermissions" : defaults.permissionMode);
 
   return {
     workspace,
     memoryDir,
-    readonly: merged.readonly ?? defaults.readonly,
+    readonly: (merged.readonly ?? defaults.readonly) || permissionMode === "plan",
     maxSteps: merged.maxSteps,
     model: merged.model ?? defaults.model,
     baseURL: merged.baseURL,
     apiKey: merged.apiKey,
     yes: merged.yes ?? defaults.yes,
     mcpConfigPath,
+    permissionMode,
+    streaming: merged.streaming ?? defaults.streaming,
     sources: {
       userConfigPath,
       projectConfigPath,
@@ -167,7 +185,9 @@ function configFromEnv(): PartialAppConfig {
     model: emptyToUndefined(process.env.OPENAI_MODEL),
     baseURL: emptyToUndefined(process.env.OPENAI_BASE_URL),
     apiKey: emptyToUndefined(process.env.OPENAI_API_KEY),
-    mcpConfigPath: emptyToUndefined(process.env.AGENT_MCP_CONFIG)
+    mcpConfigPath: emptyToUndefined(process.env.AGENT_MCP_CONFIG),
+    permissionMode: parsePermissionModeEnv(process.env.AGENT_PERMISSION_MODE),
+    streaming: parseBoolean(process.env.AGENT_STREAMING)
   };
 }
 
@@ -182,7 +202,9 @@ function cliOverridesToConfig(overrides: CliConfigOverrides): PartialAppConfig {
     maxSteps: overrides.maxSteps,
     model: overrides.model,
     yes: overrides.yes,
-    mcpConfigPath: overrides.mcpConfigPath
+    mcpConfigPath: overrides.mcpConfigPath,
+    permissionMode: overrides.permissionMode,
+    streaming: overrides.streaming
   };
 }
 
@@ -205,13 +227,6 @@ function emptyToUndefined(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function parseBoolean(value: string | undefined): boolean | undefined {
-  if (value === undefined || value.trim() === "") {
-    return undefined;
-  }
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-}
-
 function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
   if (value === undefined || value.trim() === "") {
     return undefined;
@@ -221,4 +236,12 @@ function parsePositiveIntegerEnv(value: string | undefined): number | undefined 
     throw new Error(`AGENT_MAX_STEPS must be a positive integer, got ${value}`);
   }
   return parsed;
+}
+
+function parsePermissionModeEnv(value: string | undefined): PermissionMode | undefined {
+  const mode = normalizePermissionMode(value);
+  if (value && !mode) {
+    throw new Error(`AGENT_PERMISSION_MODE must be one of default, plan, acceptEdits, dontAsk, bypassPermissions; got ${value}`);
+  }
+  return mode;
 }

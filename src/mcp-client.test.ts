@@ -41,6 +41,7 @@ test("loads and calls a mock MCP stdio server", async () => {
       memoryDir: resolve(workspace, ".agent-memory"),
       readonly: false,
       runId: "mcp-test",
+      permissionMode: "default",
       securityPolicy: {}
     });
     assert.equal(result.ok, true);

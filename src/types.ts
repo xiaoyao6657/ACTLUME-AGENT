@@ -12,11 +12,14 @@ export type AgentFinalOutput = {
 
 export type AgentOutput = AgentActionOutput | AgentFinalOutput;
 
+export type PermissionMode = "default" | "plan" | "acceptEdits" | "dontAsk" | "bypassPermissions";
+
 export type ToolContext = {
   cwd: string;
   memoryDir: string;
   readonly: boolean;
   runId: string;
+  permissionMode: PermissionMode;
   securityPolicy: SecurityPolicy;
 };
 
@@ -95,6 +98,7 @@ export type Session = {
   endedAt?: string;
   userTask: string;
   status: "running" | "completed" | "failed";
+  resumedFrom?: string;
 };
 
 export type TaskItem = {

@@ -21,10 +21,22 @@ import {
 import { loadAppConfig, type AppConfig } from "./config.js";
 import { runAgent, type RunAgentResult } from "./agent.js";
 import { loadMcpToolManager, type McpToolManager } from "./mcp-client.js";
+import { listMemories } from "./memory.js";
+import { readPlanFile } from "./plan-mode.js";
 import { scanProjectWithCache } from "./project-scan.js";
-import { loadSecurityPolicy } from "./security.js";
-import { finishSession, startSession } from "./session.js";
-import type { SecurityPolicy, ToolConfirmationRequest, ToolDefinition } from "./types.js";
+import { loadSecurityPolicy, normalizePermissionMode } from "./security.js";
+import { discoverSkills, getSkillByName, resolveSkillPrompt } from "./skills.js";
+import {
+  finishSession,
+  getLatestSessionSnapshot,
+  listSessionSnapshots,
+  loadSessionSnapshot,
+  saveSessionSnapshot,
+  startSession,
+  type SessionSnapshot
+} from "./session.js";
+import type { EditWorkflowState } from "./edit-workflow.js";
+import type { AgentHistoryItem, PermissionMode, SecurityPolicy, ToolConfirmationRequest, ToolDefinition } from "./types.js";
 import { tools as localTools } from "./tools/registry.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,6 +46,7 @@ type CliState = {
   workspace: string;
   memoryDir: string;
   readonly: boolean;
+  permissionMode: PermissionMode;
   maxSteps?: number;
   model: string;
   baseURL?: string;
@@ -44,6 +57,10 @@ type CliState = {
   mcpConfigPath?: string;
   mcpManager: McpToolManager;
   tools: ToolDefinition[];
+  resumeFrom?: string;
+  initialHistory?: AgentHistoryItem[];
+  initialWorkflowState?: EditWorkflowState;
+  streaming: boolean;
 };
 
 async function main(): Promise<void> {
@@ -66,6 +83,7 @@ async function main(): Promise<void> {
     workspace,
     memoryDir,
     readonly: appConfig.readonly,
+    permissionMode: appConfig.permissionMode,
     maxSteps: appConfig.maxSteps,
     model: appConfig.model,
     baseURL: appConfig.baseURL,
@@ -75,9 +93,13 @@ async function main(): Promise<void> {
     securityPolicy,
     mcpConfigPath: appConfig.mcpConfigPath,
     mcpManager,
-    tools: [...localTools, ...mcpManager.getTools()]
+    tools: [...localTools, ...mcpManager.getTools()],
+    streaming: appConfig.streaming
   };
   printMcpWarnings(state.mcpManager);
+  if (cliArgs.resume) {
+    await applyResumeOption(state, cliArgs.resume);
+  }
 
   if (cliArgs.task) {
     try {
@@ -104,6 +126,9 @@ function parseCliArgs(argv: string[]): {
   model?: string;
   yes?: boolean;
   mcpConfigPath?: string;
+  resume?: string | true;
+  permissionMode?: PermissionMode;
+  streaming?: boolean;
 } {
   const taskParts: string[] = [];
   let workspace: string | undefined;
@@ -113,6 +138,9 @@ function parseCliArgs(argv: string[]): {
   let model: string | undefined;
   let yes: boolean | undefined;
   let mcpConfigPath: string | undefined;
+  let resume: string | true | undefined;
+  let permissionMode: PermissionMode | undefined;
+  let streaming: boolean | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -123,6 +151,50 @@ function parseCliArgs(argv: string[]): {
 
     if (arg === "--yes" || arg === "-y") {
       yes = true;
+      permissionMode = "bypassPermissions";
+      continue;
+    }
+
+    if (arg === "--yolo") {
+      yes = true;
+      permissionMode = "bypassPermissions";
+      continue;
+    }
+
+    if (arg === "--plan") {
+      readonly = true;
+      permissionMode = "plan";
+      continue;
+    }
+
+    if (arg === "--accept-edits") {
+      permissionMode = "acceptEdits";
+      continue;
+    }
+
+    if (arg === "--dont-ask") {
+      permissionMode = "dontAsk";
+      continue;
+    }
+
+    if (arg === "--stream") {
+      streaming = true;
+      continue;
+    }
+
+    if (arg === "--resume") {
+      const next = argv[index + 1];
+      if (next && !next.startsWith("-")) {
+        resume = next;
+        index += 1;
+      } else {
+        resume = true;
+      }
+      continue;
+    }
+
+    if (arg.startsWith("--resume=")) {
+      resume = arg.slice("--resume=".length) || true;
       continue;
     }
 
@@ -196,7 +268,10 @@ function parseCliArgs(argv: string[]): {
     maxSteps,
     model,
     yes,
-    mcpConfigPath
+    mcpConfigPath,
+    resume,
+    permissionMode,
+    streaming
   };
 }
 
@@ -206,6 +281,14 @@ function parsePositiveInteger(value: string, flagName: string): number {
     throw new Error(`${flagName} must be a positive integer.`);
   }
   return parsed;
+}
+
+function parsePermissionModeCli(value: string): PermissionMode {
+  const mode = normalizePermissionMode(value);
+  if (!mode) {
+    throw new Error(`permission mode must be one of: default, plan, acceptEdits, dontAsk, bypassPermissions`);
+  }
+  return mode;
 }
 
 async function runInteractiveCli(state: CliState): Promise<void> {
@@ -315,17 +398,39 @@ async function runInteractiveCli(state: CliState): Promise<void> {
         continue;
       }
 
+      if (line === "/permission") {
+        console.log(state.permissionMode);
+        promptAgain();
+        continue;
+      }
+
+      if (line.startsWith("/permission ")) {
+        const mode = parsePermissionModeCli(line.slice("/permission ".length).trim());
+        state.permissionMode = mode;
+        if (mode === "plan") {
+          state.readonly = true;
+        }
+        if (mode === "bypassPermissions") {
+          state.yes = true;
+        }
+        console.log(`permissionMode: ${state.permissionMode}`);
+        promptAgain();
+        continue;
+      }
+
       if (line.startsWith("/cwd ")) {
         state.workspace = resolve(line.slice("/cwd ".length).trim());
         state.config = await loadAppConfig({ ...state.config, workspace: state.workspace });
         state.memoryDir = state.config.memoryDir;
         state.readonly = state.config.readonly;
+        state.permissionMode = state.config.permissionMode;
         state.maxSteps = state.config.maxSteps;
         state.model = state.config.model;
         state.baseURL = state.config.baseURL;
         state.apiKey = state.config.apiKey;
         state.yes = state.config.yes;
         state.mcpConfigPath = state.config.mcpConfigPath;
+        state.streaming = state.config.streaming;
         state.securityPolicy = await loadSecurityPolicy(state.workspace);
         await reloadMcpTools(state);
         console.log(`workspace: ${state.workspace}`);
@@ -368,6 +473,39 @@ async function runInteractiveCli(state: CliState): Promise<void> {
         await printMemory(state.memoryDir);
         promptAgain();
         continue;
+      }
+
+      if (line === "/sessions") {
+        await printSessions(state.memoryDir);
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/plan" || line.startsWith("/plan ")) {
+        await handlePlanCommand(line, state, (request) => confirmToolCallWithReadline(request, rl));
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/skills") {
+        printSkills(state.workspace);
+        promptAgain();
+        continue;
+      }
+
+      if (line === "/resume" || line.startsWith("/resume ")) {
+        const id = line === "/resume" ? true : line.slice("/resume ".length).trim();
+        await applyResumeOption(state, id || true);
+        promptAgain();
+        continue;
+      }
+
+      if (line.startsWith("/")) {
+        const handled = await maybeInvokeSkillCommand(line, state, (request) => confirmToolCallWithReadline(request, rl));
+        if (handled) {
+          promptAgain();
+          continue;
+        }
       }
 
       if (line === "/model") {
@@ -429,13 +567,18 @@ async function runSingleTask(
   state: CliState,
   confirm?: (request: ToolConfirmationRequest) => Promise<boolean>
 ): Promise<void> {
-  const session = await startSession(state.memoryDir, userTask);
+  const session = await startSession(state.memoryDir, userTask, state.resumeFrom);
 
   try {
     console.log(`[workspace] ${state.workspace}`);
     console.log(`[readonly] ${state.readonly}`);
+    console.log(`[permissionMode] ${state.permissionMode}`);
+    console.log(`[streaming] ${state.streaming}`);
     console.log(`[model] ${state.model}`);
     console.log(`[maxSteps] ${state.maxSteps}`);
+    if (state.resumeFrom) {
+      console.log(`[resume] ${state.resumeFrom} (${state.initialHistory?.length ?? 0} history items)`);
+    }
     const result = await runAgent({
       userTask,
       cwd: state.workspace,
@@ -448,10 +591,17 @@ async function runSingleTask(
       runId: session.id,
       tools: state.tools,
       autoConfirm: state.yes,
+      permissionMode: state.permissionMode,
       securityPolicy: state.securityPolicy,
+      initialHistory: state.initialHistory,
+      initialWorkflowState: state.initialWorkflowState,
+      streaming: state.streaming,
       confirmToolCall: confirm ?? ((request) => confirmToolCall(request))
     });
-    await finishSession(state.memoryDir, session, result.status === "failed" ? "failed" : "completed");
+    const finished = await finishSession(state.memoryDir, session, result.status === "failed" ? "failed" : "completed");
+    await saveSessionSnapshot(state.memoryDir, finished, result.history, result.answer, result.workflowState);
+    state.resumeFrom = finished.id;
+    state.initialHistory = result.history;
     console.log(label("\n[final answer]"));
     console.log(renderMarkdown(result.answer));
     printRunSummary(result);
@@ -469,7 +619,9 @@ function printStatus(state: CliState): void {
   console.log(`${label("baseURL")}: ${state.baseURL ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"}`);
   console.log(`${label("maxSteps")}: ${state.maxSteps}`);
   console.log(`${label("readonly")}: ${state.readonly}`);
+  console.log(`${label("permissionMode")}: ${state.permissionMode}`);
   console.log(`${label("yes")}: ${state.yes}`);
+  console.log(`${label("streaming")}: ${state.streaming}`);
   console.log(`${label("security")}: deniedTools=${state.securityPolicy.deniedTools?.length ?? 0}, allowedTools=${state.securityPolicy.allowedTools?.length ?? 0}, shellAllowlist=${state.securityPolicy.shellAllowlist?.length ?? 0}, shellDenylist=${state.securityPolicy.shellDenylist?.length ?? 0}, allowHighRiskShell=${state.securityPolicy.allowHighRiskShell === true}`);
   console.log(`${label("tools")}: ${state.tools.length} (${localTools.length} local, ${state.mcpManager.getTools().length} mcp)`);
   console.log(`${label("mcpConfig")}: ${state.mcpManager.configPath ?? "<none>"}`);
@@ -532,6 +684,7 @@ async function reloadMcpTools(state: CliState): Promise<void> {
 async function printMemory(memoryDir: string): Promise<void> {
   const actionStore = new ActionStore(memoryDir);
   const actions = await actionStore.list();
+  const typedMemories = await listMemories(memoryDir);
   const runsDir = resolve(memoryDir, "runs");
   let runCount = 0;
   try {
@@ -546,9 +699,147 @@ async function printMemory(memoryDir: string): Promise<void> {
   console.log(`memoryDir: ${memoryDir}`);
   console.log(`actions: ${actions.length}`);
   console.log(`runs: ${runCount}`);
+  console.log(`typedMemories: ${typedMemories.length}`);
   if (lastAction) {
     console.log(`lastAction: ${lastAction.timestamp} ${lastAction.toolName ?? "unknown"}`);
   }
+  for (const memory of typedMemories.slice(0, 10)) {
+    console.log(`- [${memory.type}] ${memory.name}: ${memory.description}`);
+  }
+}
+
+async function printSessions(memoryDir: string): Promise<void> {
+  const sessions = await listSessionSnapshots(memoryDir);
+  if (sessions.length === 0) {
+    console.log("No resumable sessions found.");
+    return;
+  }
+
+  for (const session of sessions.slice(0, 20)) {
+    const resumed = session.resumedFrom ? ` resumedFrom=${session.resumedFrom.slice(0, 8)}` : "";
+    console.log(
+      `${session.id.slice(0, 8)} ${session.status} history=${session.historyLength}${resumed} updated=${session.updatedAt} task=${session.userTask}`
+    );
+  }
+}
+
+async function applyResumeOption(state: CliState, resume: string | true): Promise<void> {
+  const snapshot = resume === true ? await getLatestSessionSnapshot(state.memoryDir) : await loadSessionSnapshot(state.memoryDir, resume);
+  if (!snapshot) {
+    console.log(warning(resume === true ? "No previous session found." : `Session not found: ${resume}`));
+    return;
+  }
+  applySessionSnapshot(state, snapshot);
+  console.log(success(`Resumed session ${snapshot.metadata.id.slice(0, 8)} with ${snapshot.history.length} history items.`));
+}
+
+function applySessionSnapshot(state: CliState, snapshot: SessionSnapshot): void {
+  state.resumeFrom = snapshot.metadata.id;
+  state.initialHistory = snapshot.history;
+  state.initialWorkflowState = snapshot.workflowState;
+}
+
+async function handlePlanCommand(
+  line: string,
+  state: CliState,
+  confirm: (request: ToolConfirmationRequest) => Promise<boolean>
+): Promise<void> {
+  const action = line === "/plan" ? "status" : line.slice("/plan ".length).trim().toLowerCase();
+  const planRunId = state.resumeFrom;
+
+  if (action === "on") {
+    state.permissionMode = "plan";
+    state.readonly = true;
+    console.log("Plan mode enabled. Ask the agent to inspect, writePlan, and exitPlanMode.");
+    return;
+  }
+
+  if (action === "off" || action === "approve") {
+    state.permissionMode = "default";
+    state.readonly = false;
+    console.log("Plan approved. Permission mode is now default.");
+    return;
+  }
+
+  if (action === "manual") {
+    state.permissionMode = "default";
+    state.readonly = false;
+    console.log("Plan kept for manual execution. Permission mode is now default.");
+    return;
+  }
+
+  if (action === "execute") {
+    if (!planRunId) {
+      console.log(warning("No plan session is loaded. Use /resume <id> or run a plan task first."));
+      return;
+    }
+    state.permissionMode = "default";
+    state.readonly = false;
+    const plan = await safeReadPlan(state.memoryDir, planRunId);
+    const task = plan
+      ? `Implement the approved plan from ${plan.path}.\n\n${plan.content}`
+      : "Implement the approved plan from the resumed session.";
+    await runSingleTask(task, state, confirm);
+    return;
+  }
+
+  if (action === "status") {
+    if (!planRunId) {
+      console.log("No plan session is loaded yet.");
+      return;
+    }
+    const plan = await safeReadPlan(state.memoryDir, planRunId);
+    if (!plan) {
+      console.log(`No plan file found for session ${planRunId.slice(0, 8)}.`);
+      return;
+    }
+    console.log(label(`plan: ${plan.path}`));
+    console.log(plan.content);
+    return;
+  }
+
+  console.log("Usage: /plan [status|on|off|approve|execute|manual]");
+}
+
+async function safeReadPlan(memoryDir: string, runId: string): Promise<{ path: string; content: string } | undefined> {
+  try {
+    return await readPlanFile(memoryDir, runId);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function printSkills(workspace: string): void {
+  const skills = discoverSkills(workspace);
+  if (skills.length === 0) {
+    console.log("No skills found. Add .actlume/skills/<name>/SKILL.md.");
+    return;
+  }
+  for (const skill of skills) {
+    const invoke = skill.userInvocable ? `/${skill.name}` : skill.name;
+    console.log(`${invoke} [${skill.context}:${skill.source}] - ${skill.description || "No description."}`);
+  }
+}
+
+async function maybeInvokeSkillCommand(
+  line: string,
+  state: CliState,
+  confirm: (request: ToolConfirmationRequest) => Promise<boolean>
+): Promise<boolean> {
+  const spaceIndex = line.indexOf(" ");
+  const name = (spaceIndex === -1 ? line.slice(1) : line.slice(1, spaceIndex)).trim();
+  const args = spaceIndex === -1 ? "" : line.slice(spaceIndex + 1);
+  const skill = getSkillByName(state.workspace, name);
+  if (!skill || !skill.userInvocable) {
+    return false;
+  }
+  const prompt = resolveSkillPrompt(skill, args);
+  console.log(success(`Invoking skill: ${skill.name}`));
+  await runSingleTask(prompt, state, confirm);
+  return true;
 }
 
 function printRunSummary(result: RunAgentResult): void {
@@ -679,6 +970,13 @@ function printHelp(): void {
   actlume --max-steps 20 --model gpt-4.1-mini "task"
   actlume --mcp-config .agent-mcp.json "task"
   actlume --yes "task"
+  actlume --plan "inspect and plan without writing"
+  actlume --accept-edits "auto-approve file edits, still ask for execution"
+  actlume --dont-ask "auto-deny actions that need confirmation"
+  actlume --yolo "bypass confirmation prompts"
+  actlume --stream "use streaming LLM transport while preserving JSON protocol"
+  actlume --resume "continue from the latest saved session"
+  actlume --resume <session-id> "continue from a specific saved session"
   ma
 
 Interactive commands:
@@ -691,6 +989,15 @@ Interactive commands:
   /mcp tools     List MCP tools and schemas
   /mcp reload    Reload MCP servers from config
   /memory        Show memory counts
+  /sessions      List resumable sessions
+  /resume [id]   Resume latest or a specific session
+  /plan status   Show the current resumed plan
+  /plan on       Enable plan mode
+  /plan approve  Leave plan mode after reviewing the plan
+  /plan execute  Leave plan mode and ask the agent to implement the plan
+  /plan manual   Leave plan mode and keep the plan for manual execution
+  /skills        List available skills
+  /<skill> args  Invoke a user-invocable skill
   /init          Create config examples in the current workspace
   /doctor        Check local environment and configuration
   /compact       Refresh project summary and index cache
@@ -702,6 +1009,8 @@ Interactive commands:
   /readonly      Print readonly mode
   /readonly on   Enable readonly mode
   /readonly off  Disable readonly mode
+  /permission    Print permission mode
+  /permission <default|plan|acceptEdits|dontAsk|bypassPermissions>
   /yes           Print auto-confirm flag
   /yes on        Enable auto-confirm flag
   /yes off       Disable auto-confirm flag

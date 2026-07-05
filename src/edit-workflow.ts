@@ -60,6 +60,17 @@ export class EditWorkflowStore {
     return state;
   }
 
+  async restoreFrom(previous: EditWorkflowState): Promise<EditWorkflowState> {
+    const state: EditWorkflowState = {
+      runId: this.runId,
+      plan: previous.plan,
+      changedFiles: previous.changedFiles ?? [],
+      checks: previous.checks ?? []
+    };
+    await this.write(state);
+    return state;
+  }
+
   async get(): Promise<EditWorkflowState> {
     try {
       const raw = await readFile(this.filePath, "utf8");
