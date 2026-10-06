@@ -92,7 +92,7 @@ npm run smoke:package
 npm run eval:summary -- evals/runs.jsonl actlume-control=actlume-full
 ```
 
-`npm run ci` 运行类型检查、测试和确定性 benchmark。`npm run smoke:package` 将 npm tarball 安装到唯一临时 consumer，检查生产入口、headless mock、resume、Pi 工具注册和独立 oracle；报告写入忽略目录 `.agent-benchmark/package-smoke`。Benchmark 在唯一临时目录中建立仓库夹具，清理时只删除本次创建的路径，不会清空仓库里的 `.agent-benchmark`。基础测试、包 smoke 和 Eval protocol cards 使用本地 deterministic provider，不调用真实模型。九张核心卡在 Windows 与 Ubuntu 24.04 WSL2（原生 Linux Node）均通过 protocol/oracle；这些结果只验运行/故障/记录契约。真实模型阶段在 `eb941e32` 源码候选完成 24 次 development 和 8 次 post-freeze confirmation，usage 均完整；当前源码候选与其只在两个 README 文件不同。oracle 结果混合、provider revision/sampling 未知，confirmation 还复用了早期任务卡；没有可报告的策略收益或未见任务泛化结论。更早候选的两次 campaign 曾因 usage unknown 提前停止，详见[第二轮实验报告](docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)。运行方式和限制另见 [`evals/README.md`](evals/README.md) 和[架构图](docs/ACTLUME-ARCHITECTURE.md)。
+`npm run ci` 运行类型检查、测试和确定性 benchmark。`npm run smoke:package` 将 npm tarball 安装到唯一临时 consumer，检查生产入口、headless mock、resume、Pi 工具注册和独立 oracle；报告写入忽略目录 `.agent-benchmark/package-smoke`。Benchmark 在唯一临时目录中建立仓库夹具，清理时只删除本次创建的路径，不会清空仓库里的 `.agent-benchmark`。基础测试、包 smoke 和 Eval protocol cards 使用本地 deterministic provider，不调用真实模型。九张核心卡在 Windows 与 Ubuntu 24.04 WSL2（原生 Linux Node）均通过 protocol/oracle；这些结果只验运行/故障/记录契约。真实模型阶段在 `eb941e32` 源码候选完成 24 次 development 和 8 次 post-freeze confirmation，usage 均完整；当前验收代码 `fa4ba7d` 与实验候选有 4 个 production-input 差异，没有在当前代码上重跑真实模型 campaign。oracle 结果混合、provider revision/sampling 未知，confirmation 还复用了早期任务卡；没有可报告的策略收益或未见任务泛化结论。更早候选的两次 campaign 曾因 usage unknown 提前停止，详见[第二轮实验报告](docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)。运行方式和限制另见 [`evals/README.md`](evals/README.md) 和[架构图](docs/ACTLUME-ARCHITECTURE.md)。
 
 ## 主要模块
 
