@@ -1,6 +1,6 @@
 # Actlume 第二轮工作规划
 
-日期：2026-10-07。最新增量源码候选为 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base commit `6ae8b7c46cb30089b576f08370c7a0de4779d3ba` 的 1 个 production input：artifact path implementation；当前提交 `fa4ba7d`）。Windows 当前候选通过 `npm run ci`：192/192 tests、16/16 benchmarks；`npm run smoke:package`、九卡 protocol/oracle 与 15 卡 fixture preflight 也通过。GitHub Actions run [37503514367](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367) 的 Ubuntu 和 Windows jobs 均通过，包含完整 CI 与生产包 smoke。此前 commit `6ae8b7c` 暴露 canonical root 与未 canonicalize 请求路径的误拒绝；当前代码对已存在文件验证 canonical target，对缺失路径检查最近现存祖先。PTY 自动证据在前一候选 `e34d0393…cc03`，真人 IME/视觉矩阵仍未执行。真实模型 campaigns 在 `eb941e32…36c4ca` 上运行；最新源码相对该候选仍有 4 个生产输入差异，不声称当前代码收益。证据见[任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md)、[源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)、[实验报告](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)和[工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md)。
+日期：2026-10-07。最新验收代码提交为 `fa4ba7d7b99818778616579e72992b6393d8fa5e`；checkout 当前位于 `fdb62942a971a79c806cde6052d1db26d9168e9d`，这是只更新验收文档的后续提交，`src/` 与代码提交完全一致。增量候选 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15` 相对 base commit `6ae8b7c46cb30089b576f08370c7a0de4779d3ba` 含 1 个 production input（artifact path implementation）。Windows 本机通过 `npm run ci`（192/192 tests、16/16 benchmarks）、`npm run smoke:package`、九卡 protocol/oracle 与 15 卡 fixture preflight；GitHub Actions run [37503514367](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367) 验证 `fa4ba7d` 的 Ubuntu/Windows 完整 CI 与生产包 smoke。最新文档提交 `fdb6294` 的 Windows/Ubuntu CI 也通过 run [37504629728](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37504629728)。Linux 原生 Node 24.14.1、Pi 1.0.2 下已在干净 checkout 重跑 PTY 输入/resize/退出和确定性审批拒绝；报告见 `.agent-benchmark/demo/tui-pty-matrix-fdb6294-native/`、`.agent-benchmark/demo/tui-approval-pty-fdb6294-native/`。它们的 worktree delta hash `e3b0…b855` 表示零个未提交 production input，不是完整源码哈希；人工 IME/视觉矩阵仍未执行。真实模型 campaigns 在 `eb941e32…36c4ca` 上运行；与最新代码仍有 4 个 production-input 差异，不声称当前代码收益。证据见[任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md)、[源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)、[实验报告](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)和[工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md)。
 
 依据：[原改造计划](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-PLAN.md)、[本轮验收评估](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-ASSESSMENT-2026-10-05.md)、[Pi 宿主架构决策](D:/workspace/actlume-agent/docs/adr/0001-pi-cli-runtime.md)。
 
@@ -235,7 +235,7 @@ Runtime 状态约束：收到请求后进入 cancelling；确认本地执行停�
 - [x] R6-06 在唯一临时目录安装 npm pack 产物和生产依赖，运行 help、非交互 mock 任务、工具加载、resume 和入口启动。
 - [x] R6-07 CI 在 Windows/Linux 执行关键生命周期、进程取消和产物安装 smoke；真实模型实验独立于无密钥 CI。当前提交 `fa4ba7d` 的 hosted [Windows](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234554) 与 [Ubuntu](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234243) jobs 均通过完整 `npm run ci` 与 `npm run smoke:package`。本地增量候选 `a857d20f…c4ae15` 另通过九卡 protocol/oracle、15 卡 fixture preflight；前一候选 `e34d0393…cc03` 的 Ubuntu 原生 Linux release/package 也已通过。日志保存在 `.agent-benchmark/windows-ci/hosted-fa4ba7d-job.log` 和 `.agent-benchmark/linux-ci/hosted-fa4ba7d-job.log`。
 - [x] R6-08 对 MCP startupTimeout/toolPrefix 等旧配置给出迁移诊断，不能静默声称行为等价。
-- [ ] R6-09 完成终端矩阵和短演示，同步 README/CHANGELOG/命令帮助/兼容说明。文档/help 已同步。自动尺寸/输入/退出与确定性审批拒绝报告在前一候选 `e34d0393…cc03`：`.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/`、`.agent-benchmark/demo/tui-approval-pty-e34d0393-native/`；中断恢复 PTY transcript/oracle 在 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.{typescript,json}`。当前路径比较修正不改变 TUI UI，但这些报告不是当前候选精确哈希复验。自动 PTY 不等同真人视觉/IME验收或录屏；Windows/Linux 中文 IME、长历史、人工审批焦点和视觉复核、连续交互录屏仍待人工执行。
+- [ ] R6-09 完成终端矩阵和短演示，同步 README/CHANGELOG/命令帮助/兼容说明。文档/help 已同步。当前代码提交 `fa4ba7d`（文档 checkout `fdb6294`，`src/` 完全一致）已在 Ubuntu 原生 Linux Node 24.14.1/Pi 1.0.2 下重跑自动尺寸/Unicode 多行输入/退出恢复和确定性 provider 审批拒绝，报告与 transcript 在 `.agent-benchmark/demo/tui-pty-matrix-fdb6294-native/`、`.agent-benchmark/demo/tui-approval-pty-fdb6294-native/`。此前中断恢复 PTY transcript/oracle 在 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.{typescript,json}`；Windows 当前候选 `a857d20f…c4ae15` 的 interrupt-recovery protocol/oracle 已通过。自动 PTY 不等同真人视觉/IME验收或录屏；Windows/Linux 中文 IME、长历史、人工审批焦点和视觉复核、连续交互录屏仍待人工执行，因此 R6-09 保持未完成。
 
 ### 终端矩阵
 
@@ -245,15 +245,15 @@ Windows Terminal + PowerShell 和 Linux 终端；80×24 与 120×40；中文 IME
 
 人工结果使用[终端验收记录表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-MANUAL-TUI-CHECKLIST.md)登记；当前所有人工字段保持 `not run`，自动 smoke 不会自动改写这些结果。
 
-最终候选的 Linux 自动 PTY smoke 可在 WSL2 原生 Linux Node 与 ext4 工作副本上复跑（路径按本机调整）：
+当前 Linux 自动 PTY smoke 可在 WSL2 原生 Linux Node 与干净 ext4 checkout 上复跑（测试源码是 `fa4ba7d`，checkout `fdb6294` 的 `src/` 相同；路径按本机调整）：
 
 ```sh
 python3 /mnt/d/workspace/actlume-agent/docs/support/tui-pty-smoke.py \
-  --workspace /root/actlume-round2-55a71eac-ext4 \
-  --expected-candidate e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03 \
+  --workspace /root/actlume-r6-09-fdb6294-ext4 \
+  --expected-candidate e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 \
   --node /root/.local/actlume-node-v24.14.1/bin/node \
   --path-prefix /root/.cache/actlume-pi-cli-test-8171/bin \
-  --output-dir /root/actlume-round2-55a71eac-ext4/.agent-benchmark/demo/tui-pty-matrix-e34d0393-native
+  --output-dir /root/actlume-r6-09-fdb6294-ext4/.agent-benchmark/demo/tui-pty-matrix-fdb6294-native
 ```
 
 网络/TLS 或外部 runner 不可用时保存精确日志和待执行命令，继续其他本地任务；对应 gate 保持未通过，不能将其变成“整体完成”。

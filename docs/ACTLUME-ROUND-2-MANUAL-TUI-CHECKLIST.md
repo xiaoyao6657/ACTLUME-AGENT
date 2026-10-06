@@ -4,10 +4,12 @@
 
 ## 当前候选
 
-- 候选 manifest：`sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`
+- 被测代码提交：`fa4ba7d7b99818778616579e72992b6393d8fa5e`；测试 checkout 为 `fdb62942a971a79c806cde6052d1db26d9168e9d`，两者的 `src/` 完全相同，后者仅增加文档记录。
 - Node：24.14.1；Pi：1.0.2
-- 自动输入/尺寸/退出记录：`.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/tui-pty-smoke.json`（生成于前一候选 `e34d0393…cc03`）
-- 自动审批拒绝记录：`.agent-benchmark/demo/tui-approval-pty-e34d0393-native/tui-approval-smoke.json`（生成于前一候选 `e34d0393…cc03`）
+- Linux 自动输入/尺寸/退出记录：`.agent-benchmark/demo/tui-pty-matrix-fdb6294-native/tui-pty-smoke.json`；原始 transcript 同目录的 `tui-pty-smoke.typescript`，SHA-256 `782659eda558cf1f69cc4928ba9d39b5a8dc6ba6081994356bd3a634977f32ab`。
+- Linux 自动审批拒绝记录：`.agent-benchmark/demo/tui-approval-pty-fdb6294-native/tui-approval-smoke.json`；原始 transcript 同目录的 `tui-approval-smoke.typescript`，SHA-256 `02d88c8f518eef56b26c9f3ad8b3c06b106f9abf05baacf2ebb3d3d073d212a9`。
+- 两组报告的来源、完整哈希和人工验收边界汇总：`.agent-benchmark/demo/tui-matrix-fdb6294-summary.json`。
+- 两份报告中的 `candidateSha256=e3b0…b855` 表示测试时 checkout 没有未提交的 production-input 变更（`changedProductionInputs=0`），不是完整源码提交的内容哈希；源码身份由上述 Git commit 和 `src/` 一致性检查说明。
 - 自动化通过不预填下面任何人工结果。
 
 ## 运行环境记录

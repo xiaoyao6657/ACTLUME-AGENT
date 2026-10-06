@@ -415,6 +415,16 @@
 - 未覆盖边界：Windows/Linux 自动验证不替代 R6-09 要求的真人 OS IME、审批焦点、长历史视觉检查和连续交互录屏。fixture preflight 和 deterministic protocol 只验证 harness/runtime contract，不证明真实模型任务质量。
 - 状态：代码、本地回归与 hosted 双平台复验已通过；R6-07 验收完成，人工 TUI 验收仍按 R6-09 跟踪。
 
+## 2026-10-07：在保留脏 ext4 工作副本的前提下复验最新 TUI 代码
+
+- 关联：R0-01、R6-09。
+- 触发/观察：R6-09 的自动 PTY 报告仍指向旧候选 `e34d0393…cc03`，无法说明最新 artifact 路径修复后的代码是否仍能启动 TUI、处理 resize/输入、恢复终端模式和拒绝审批。已有 ext4 工作副本包含未提交改动；覆盖或重置它会丢失候选状态并可能再次引入 CRLF 噪声。
+- 根因：旧报告与当前源码候选之间有代码差异，不能以“UI 理应未变”代替复验；同时现存 ext4 目录不是可安全重置的干净 checkout。
+- 采用方案与替代方案：保留原脏副本，新建 `fdb6294` 干净 ext4 clone，并在其中执行 Linux PTY 和确定性本地 provider 审批拒绝 smoke。`npm ci` 以 `Exit handler never called!` 结束；在确认新旧 checkout 的 `package.json`、`package-lock.json` 一致后，复用旧副本已安装的 ignored `node_modules`，核对原生 Linux Node/Pi 版本后继续。该 npm 安装异常根因未知，作为本次环境启动问题记录，不归类为产品缺陷。测试 checkout `fdb6294` 的 `src/` 与代码提交 `fa4ba7d` 完全一致；两个报告的 `candidateSha256=e3b0…b855` 是零个未提交生产输入的 delta hash，不是源码快照 hash。
+- 验证证据：`.agent-benchmark/demo/tui-pty-matrix-fdb6294-native/tui-pty-smoke.json` 通过 80×24 启动、120×40 resize、Unicode/emoji 多行粘贴 redraw、Ctrl+C/Ctrl+D、exit code 0 和 canonical/echo/signal 模式恢复；transcript SHA-256 为 `782659eda558cf1f69cc4928ba9d39b5a8dc6ba6081994356bd3a634977f32ab`。`.agent-benchmark/demo/tui-approval-pty-fdb6294-native/tui-approval-smoke.json` 记录本地 provider 收到两次请求、审批提示出现、Down+Enter 拒绝、tool reply 为 `User rejected shell.`、命令输出未执行、provider errors 0、exit code 0；transcript SHA-256 为 `02d88c8f518eef56b26c9f3ad8b3c06b106f9abf05baacf2ebb3d3d073d212a9`。
+- 未覆盖边界：自动 PTY 不模拟 OS IME，也不评估真实终端布局、长历史滚动和用户对审批焦点的可辨识性；没有 Windows TUI 实测或连续交互录屏。R6-09/G6 人工项目仍未完成。
+- 状态：最新代码的 Linux 自动 PTY 与审批拒绝复验通过；人工 Windows/Linux 矩阵和连续录屏仍待执行。
+
 ## 难题条目模板
 
 复制此结构并填写，不存在的证据标为未知：
