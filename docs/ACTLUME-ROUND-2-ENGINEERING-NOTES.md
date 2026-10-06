@@ -401,7 +401,7 @@
 - 触发/观察：PR #1 commit `9d4d6a7` 的 hosted Windows job 第二次运行时，原先的 extended-length 已存在文件读取回归通过，但同一测试中仓库内缺失文件的断言失败：期望 `ARTIFACT_NOT_FOUND`，实际返回 `ARTIFACT_PATH_OUTSIDE_ROOT`。Ubuntu job 通过。日志见 `https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37497953580/job/112387247780`。
 - 根因：Windows runner 的 `realpath()` 返回路径与 `resolve()` 得到的普通/扩展路径格式不一致。已有文件的 `realpath()` 会让路径比较成功，但在文件不存在时只能比较尚未 canonicalize 的路径；`relative()` 把等价的 drive root 当成不相容路径，进而误判越界。本地 Windows runner 的临时路径格式没有触发这个差异。
 - 采用方案与替代方案：在执行相对路径包含检查前，统一比较路径表示：Windows 下将 `\\?\\` drive 前缀去除，并把 `\\?\\UNC\\` 转回普通 UNC；然后仍对现存目标执行 `realpath()`，单独拒绝真正的 symlink escape。测试覆盖普通路径与 `\\?\\` 路径下的缺失 artifact 都返回 `ARTIFACT_NOT_FOUND`，并覆盖已有扩展路径读取与 outside-root 拒绝。替代方案是仅在本机通过后忽略 hosted failure，或把一切 `ENOENT` 都当作 not-found；前者遗漏平台差异，后者会混淆目录外缺失请求。
-- 验证证据：增量候选 `sha256:49dd8d0d7958685aafa453b9628b4c7d99b7ce8033eb66d877648ec988c095e3`（相对 base `9d4d6a75…`）的 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 Windows protocol/oracle 均通过，15 张 fixture preflight 完成且 `qualityClaim=false`。最新 hosted PR rerun 仍待执行。
+- 验证证据：增量候选 `sha256:49dd8d0d7958685aafa453b9628b4c7d99b7ce8033eb66d877648ec988c095e3`（相对 base `9d4d6a75…`）的 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 Windows protocol/oracle 均通过，15 张 fixture preflight 完成且 `qualityClaim=false`。其 hosted PR 后续提交 `6ae8b7c` 的 Windows job 暴露有效路径误拒问题，见下一条；最终修复在 `fa4ba7d` 双平台 Actions 通过。
 - 未覆盖边界：本地 Windows 全量通过不能代替 hosted Windows runner；当前还需由 PR 最新 commit 的两端 Actions 验证。
 - 状态：实现和本地回归已验收；最新 hosted 复验待执行。
 
@@ -411,9 +411,9 @@
 - 触发/观察：PR #1 commit `6ae8b7c` 的 Ubuntu job 通过、Windows job 失败；既有扩展路径 artifact 读取在 `src/tools/artifact.test.ts:29` 失败，Pi compaction/reopen 集成测试中的普通 artifact 回读也在 `src/pi-runtime.test.ts:556` 失败。日志：<https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37501138407/job/112398139390>。
 - 根因：上一修复在访问目标前，将 `realpath()` 得到的 canonical artifact root 与尚未 canonicalize 的输入路径做 containment 比较并立即拒绝。GitHub Windows runner 上等价路径表示不同，导致 `relative()` 产出跨根路径；已有文件本应先 `realpath(candidate)` 再作最终物理边界检查。相同表示差异也会影响 `ENOENT` 请求分类。
 - 采用方案与替代方案：对已存在文件，只依据 canonical root 和 canonical target 判断是否越界；对 `ENOENT`，沿请求路径向上解析最近的现存祖先，再确认该祖先是否属于 artifact root，区分根内缺失和根外请求。若现存目标在物理根外，仍根据请求路径的词法位置区分直接越界与 root 内 symlink escape。替代方案是保留早期词法拒绝，会继续拒绝有效 Windows alias；将所有 `ENOENT` 当作 not-found 则会把 root 外请求混为一类。
-- 验证证据：增量候选 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base `6ae8b7c…`，1 个 production input）本机 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 deterministic protocol/oracle 全通过；15 张 fixture/oracle preflight 完成且 `qualityClaim=false`。artifact 单测覆盖普通/扩展路径的现存文件读取和缺失文件分类；Pi compaction/reopen artifact 回读集成测试通过。
-- 未覆盖边界：本地 Windows 结果不能替代 GitHub hosted runner；修复版本的最新双平台 Actions 尚待提交后运行。fixture preflight 和 deterministic protocol 只验证 harness/runtime contract，不证明真实模型任务质量。
-- 状态：代码与本地回归已通过；hosted 复验待执行。
+- 验证证据：增量候选 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base `6ae8b7c…`，1 个 production input）本机 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 deterministic protocol/oracle 全通过；15 张 fixture/oracle preflight 完成且 `qualityClaim=false`。artifact 单测覆盖普通/扩展路径的现存文件读取和缺失文件分类；Pi compaction/reopen artifact 回读集成测试通过。提交 `fa4ba7d` 的 hosted [Windows](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234554) 和 [Ubuntu](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234243) job 均通过；日志保存在 `.agent-benchmark/windows-ci/hosted-fa4ba7d-job.log` 与 `.agent-benchmark/linux-ci/hosted-fa4ba7d-job.log`。
+- 未覆盖边界：Windows/Linux 自动验证不替代 R6-09 要求的真人 OS IME、审批焦点、长历史视觉检查和连续交互录屏。fixture preflight 和 deterministic protocol 只验证 harness/runtime contract，不证明真实模型任务质量。
+- 状态：代码、本地回归与 hosted 双平台复验已通过；R6-07 验收完成，人工 TUI 验收仍按 R6-09 跟踪。
 
 ## 难题条目模板
 

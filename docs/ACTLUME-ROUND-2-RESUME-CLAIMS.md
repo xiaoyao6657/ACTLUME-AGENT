@@ -1,6 +1,6 @@
 # Evidence-backed resume claims
 
-These statements are limited to repository artifacts and local checks. The latest incremental source candidate is `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15` (one production input changed from base `6ae8b7c46cb30089b576f08370c7a0de4779d3ba`). Current Windows `npm run ci` passes typecheck, 192 tests and 16 benchmarks; Windows package smoke, nine protocol oracles and 15-card preflight also pass. Ubuntu 24.04 WSL2/ext4 native Linux passed the same full release/package checks on preceding source candidate `e34d0393…cc03`; latest hosted PR run is needed to validate the Windows path-containment fix. Real-model strategy gains remain unmeasured.
+These statements are limited to repository artifacts and local checks. The latest incremental source candidate is `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15` (one production input changed from base `6ae8b7c46cb30089b576f08370c7a0de4779d3ba`; committed as `fa4ba7d`). Current Windows `npm run ci` passes typecheck, 192 tests and 16 benchmarks; Windows package smoke, nine protocol oracles and 15-card preflight also pass. The exact source commit passed hosted Windows and Ubuntu full CI/package checks in [run 37503514367](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367). Ubuntu 24.04 WSL2/ext4 native Linux also passed the same full release/package checks on preceding source candidate `e34d0393…cc03`. Real-model strategy gains remain unmeasured.
 
 ## Defensible now
 

@@ -1,6 +1,6 @@
 # Actlume 第二轮工作规划
 
-日期：2026-10-07。最新增量源码候选为 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base commit `6ae8b7c46cb30089b576f08370c7a0de4779d3ba` 的 1 个 production input：artifact path implementation）。Windows 当前候选通过 `npm run ci`：192/192 tests、16/16 benchmarks；`npm run smoke:package`、九卡 protocol/oracle 与 15 卡 fixture preflight 也通过。前一候选 `e34d0393…cc03` 的 Ubuntu 24.04 WSL2/ext4 原生 Linux release/package/protocol/preflight 全部通过。PR #1 commit `6ae8b7c` hosted Ubuntu 通过，但 Windows 因把 canonical artifact root 与未经 canonicalize 的请求路径提前比较而误拒绝有效读取；当前候选改为现存路径 canonicalize 后验证，缺失路径检查最近现存祖先。此修复的 hosted 双平台复验待推送。PTY 自动证据在前一候选 `e34d0393…cc03`，真人 IME/视觉矩阵仍未执行。真实模型 campaigns 在 `eb941e32…36c4ca` 上运行；最新源码相对该候选仍有 4 个生产输入差异，不声称当前代码收益。证据见[任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md)、[源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)、[实验报告](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)和[工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md)。
+日期：2026-10-07。最新增量源码候选为 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base commit `6ae8b7c46cb30089b576f08370c7a0de4779d3ba` 的 1 个 production input：artifact path implementation；当前提交 `fa4ba7d`）。Windows 当前候选通过 `npm run ci`：192/192 tests、16/16 benchmarks；`npm run smoke:package`、九卡 protocol/oracle 与 15 卡 fixture preflight 也通过。GitHub Actions run [37503514367](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367) 的 Ubuntu 和 Windows jobs 均通过，包含完整 CI 与生产包 smoke。此前 commit `6ae8b7c` 暴露 canonical root 与未 canonicalize 请求路径的误拒绝；当前代码对已存在文件验证 canonical target，对缺失路径检查最近现存祖先。PTY 自动证据在前一候选 `e34d0393…cc03`，真人 IME/视觉矩阵仍未执行。真实模型 campaigns 在 `eb941e32…36c4ca` 上运行；最新源码相对该候选仍有 4 个生产输入差异，不声称当前代码收益。证据见[任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md)、[源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)、[实验报告](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md)和[工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md)。
 
 依据：[原改造计划](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-PLAN.md)、[本轮验收评估](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-ASSESSMENT-2026-10-05.md)、[Pi 宿主架构决策](D:/workspace/actlume-agent/docs/adr/0001-pi-cli-runtime.md)。
 
@@ -233,7 +233,7 @@ Runtime 状态约束：收到请求后进入 cancelling；确认本地执行停�
 - [x] R6-04 关闭未经控制的扩展自动加载，明确接入需要的 Pi 内置扩展（含 MCP）；设置最终工具 allowlist，测试本机/项目额外扩展不能扩大只读子任务工具集。
 - [x] R6-05 更新依赖版本与发布策略，移除运行时 latest；先完成生产依赖入口，若编译 dist 会破坏 Pi extension 加载则保留明确的 TS/tsx 运行时方案并验收。
 - [x] R6-06 在唯一临时目录安装 npm pack 产物和生产依赖，运行 help、非交互 mock 任务、工具加载、resume 和入口启动。
-- [ ] R6-07 CI 在 Windows/Linux 执行关键生命周期、进程取消和产物安装 smoke；真实模型实验独立于无密钥 CI。当前候选 `a857d20f…c4ae15` 的 Windows `npm run ci`（192 tests、16 benchmarks）、生产包 smoke、九卡 protocol/oracle 和 15 卡 fixture preflight 均通过。前一候选 `e34d0393…cc03` 的 Windows 与 Ubuntu 原生 Linux均通过完整 `release:dry`、包 smoke、九卡协议及 fixture preflight。PR #1 commit `6ae8b7c` hosted Ubuntu 通过、Windows 暴露有效 artifact 读取被误拒的问题；现已改为 canonical target/ancestor containment，需推送并收集最新 commit 的双平台 Actions。
+- [x] R6-07 CI 在 Windows/Linux 执行关键生命周期、进程取消和产物安装 smoke；真实模型实验独立于无密钥 CI。当前提交 `fa4ba7d` 的 hosted [Windows](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234554) 与 [Ubuntu](https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37503514367/job/112406234243) jobs 均通过完整 `npm run ci` 与 `npm run smoke:package`。本地增量候选 `a857d20f…c4ae15` 另通过九卡 protocol/oracle、15 卡 fixture preflight；前一候选 `e34d0393…cc03` 的 Ubuntu 原生 Linux release/package 也已通过。日志保存在 `.agent-benchmark/windows-ci/hosted-fa4ba7d-job.log` 和 `.agent-benchmark/linux-ci/hosted-fa4ba7d-job.log`。
 - [x] R6-08 对 MCP startupTimeout/toolPrefix 等旧配置给出迁移诊断，不能静默声称行为等价。
 - [ ] R6-09 完成终端矩阵和短演示，同步 README/CHANGELOG/命令帮助/兼容说明。文档/help 已同步。自动尺寸/输入/退出与确定性审批拒绝报告在前一候选 `e34d0393…cc03`：`.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/`、`.agent-benchmark/demo/tui-approval-pty-e34d0393-native/`；中断恢复 PTY transcript/oracle 在 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.{typescript,json}`。当前路径比较修正不改变 TUI UI，但这些报告不是当前候选精确哈希复验。自动 PTY 不等同真人视觉/IME验收或录屏；Windows/Linux 中文 IME、长历史、人工审批焦点和视觉复核、连续交互录屏仍待人工执行。
 
@@ -317,7 +317,7 @@ Trace 增加 HTTP 状态处理、可观测的丢失计数、受限队列、退�
 | G3 证据 | 空检查不能冒充验证，版本/范围/要求变化使证据失效，UI/JSONL/回放语义一致 | R3 | Windows 当前候选 `a857d20f…c4ae15` 全量 `npm run ci` 192/192 tests、16/16 benchmarks 通过；Ubuntu 原生 Linux前一候选 `e34d0393…cc03` 同样通过。最新双平台 hosted CI 由 G6 跟踪。 |
 | G4 评测协议 | 核心九张卡可执行，独立 oracle、隔离 attempt、策略开关和严格配对通过 | R4、R5 | Windows 当前候选 `a857d20f…c4ae15` 九卡 oracle 9/9；Ubuntu 原生 Linux前一候选 `e34d0393…cc03` 九卡 9/9。protocol reports 只验协议和 validator，不代表模型质量。 |
 | G5 记忆/上下文 | 未见跨会话任务、过期配置、替代、分支及压缩连续性通过 | R5 | 本地通过；新增 Pi SessionManager 三次 compaction + reopen 集成回归并验证 artifact 回读 |
-| G6 产品交付 | 干净生产安装、远端双平台 CI、终端矩阵及演示有实际证据 | R6 | Windows 当前候选 `a857d20f…c4ae15` 的 CI/包 smoke 通过；Linux 前一候选 `e34d0393…cc03` 本地 `release:dry`/包 smoke 通过。最新 PR hosted 双平台 CI 和 OS IME、真人审批焦点、长历史人工矩阵、人工视觉复核及交互 TUI 连续录屏仍待验。 |
+| G6 产品交付 | 干净生产安装、远端双平台 CI、终端矩阵及演示有实际证据 | R6 | `fa4ba7d` hosted Windows/Ubuntu CI 与 package smoke 均通过（run `37503514367`）；人工 OS IME、真人审批焦点、长历史矩阵、人工视觉复核及交互 TUI 连续录屏仍待验。 |
 | G7 真实实验 | 固定/如实记录模型条件，重复与保留任务结果、失败和局限可复现 | R7 | 实验 campaign 与报告对源码候选 `eb941e32…36c4ca` 已完成：bounded smoke 5/5 usage-known；development 24/24、1,340,985 tokens；post-freeze confirmation 8/8、456,249 tokens。当前候选 `a857d20f…c4ae15` 相对实验候选有 4 个生产输入差异；实验是历史候选证据、非当前源码精确复验。holdout 卡曾复用，provider revision/sampling unknown，不推断策略收益或价格。 |
 
 全部 G1–G7 通过，才可宣布原计划 M0–M5 第一版改造完成。收益不显著不算未完成，但没有运行实验、外部 gate 未验收或测试被跳过不能算通过。R8 单独报告，不作为原核心版本的替代证据。
@@ -326,12 +326,11 @@ Trace 增加 HTTP 状态处理、可观测的丢失计数、受限队列、退�
 
 ## 14. 剩余执行清单
 
-当前工作区内可复现的实现和确定性测试已经完成。以下门槛没有相应平台、人工交互或真实 provider 证据前不能勾选：
+当前实现、确定性验证和托管双平台 CI 已通过。尚未完成的外部/人工验收及结论边界如下：
 
-1. 在托管 GitHub Actions 上实际运行双平台 workflow 并保存链接/日志。PR #1 commit `9d4d6a7` hosted Windows 将缺失 artifact 错误分类；随后 commit `6ae8b7c` 的 Windows run 又发现有效 artifact 读取被过早拒绝。当前 `a857d20f…c4ae15` 已在 Windows 本地通过 192 tests、16 benchmarks、package smoke、9/9 protocol 与 15 卡 preflight，推送后须检查最新 Actions 双平台结果。
-2. 完成 Windows Terminal 与 Linux 的人工终端矩阵和连续屏幕演示，记录中文 IME 组合、缩放、审批焦点和终端恢复；最终候选已有原生 Linux自动 PTY 80×24→120×40、Unicode 多行输入、Ctrl+C/Ctrl+D、termios 恢复，以及 deterministic provider 的审批拒绝证据，但不替代人工 IME/焦点/视觉验收或交互录屏。
-3. 真实模型 bounded smoke、development 24/24 及 post-freeze confirmation 8/8 使用 `eb941e32…36c4ca` 源码候选；当前 `a857d20f…c4ae15` 与其有 4 个 production-input 差异，因此这些实验是历史候选证据，不是当前源码精确复现实验。旧实验 usage 完整，但 provider revision/sampling unknown、确认集复用卡片，不能由此推断当前候选策略收益。
-4. 当前没有可归因的并行写/托管 Trace 收益，R8-03 已决定暂缓新功能；若后续获得可靠核心实验，再重新开范围决策。
+1. 完成 Windows Terminal 与 Linux 的人工终端矩阵和连续屏幕演示，记录中文 IME 组合、缩放、审批焦点和终端恢复；自动 PTY 已覆盖 Linux 80×24→120×40、Unicode 多行输入、Ctrl+C/Ctrl+D、termios 恢复及 deterministic provider 审批拒绝，但不替代真人 IME/焦点/视觉验收或交互录屏。
+2. 真实模型 bounded smoke、development 24/24 及 post-freeze confirmation 8/8 使用 `eb941e32…36c4ca` 源码候选；当前 `a857d20f…c4ae15` 与其有 4 个 production-input 差异，因此这些实验是历史候选证据，不是当前源码精确复现实验。旧实验 usage 完整，但 provider revision/sampling unknown、确认集复用卡片，不能由此推断当前候选策略收益。
+3. 当前没有可归因的并行写/托管 Trace 收益，R8-03 已决定暂缓新功能；若后续获得可靠核心实验，再重新开范围决策。
 
 ## 15. 难题记录规范
 
