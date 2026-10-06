@@ -4,10 +4,10 @@
 
 ## 当前候选
 
-- 候选 manifest：`sha256:1897300da47ce4047a5cddbb0af6b4e1efb3dc3862e7c05ddd22e1145e59677f`
+- 候选 manifest：`sha256:e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03`
 - Node：24.14.1；Pi：1.0.2
-- 自动输入/尺寸/退出记录：`.agent-benchmark/demo/tui-pty-matrix-1897300d-native/tui-pty-smoke.json`
-- 自动审批拒绝记录：`.agent-benchmark/demo/tui-approval-pty-1897300d-native/tui-approval-smoke.json`
+- 自动输入/尺寸/退出记录：`.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/tui-pty-smoke.json`
+- 自动审批拒绝记录：`.agent-benchmark/demo/tui-approval-pty-e34d0393-native/tui-approval-smoke.json`
 - 自动化通过不预填下面任何人工结果。
 
 ## 运行环境记录

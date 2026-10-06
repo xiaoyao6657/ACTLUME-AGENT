@@ -176,12 +176,17 @@ def main() -> int:
     base_url = f"http://127.0.0.1:{server.server_port}/v1"
 
     with tempfile.TemporaryDirectory(prefix="actlume-tui-approval-") as temp_home:
+        empty_mcp_config = Path(temp_home) / "mcp-empty.json"
+        empty_mcp_config.write_text('{"servers":{}}\n', encoding="utf-8")
         child_env = os.environ.copy()
         child_env.update({
             "PATH": os.pathsep.join(path_parts),
             "HOME": temp_home,
             "ACTLUME_HOME": temp_home,
+            "PI_CODING_AGENT_DIR": str(Path(temp_home) / "pi-config"),
+            "PI_OFFLINE": "1",
             "AGENT_MEMORY_DIR": str(Path(temp_home) / "memory"),
+            "AGENT_MCP_CONFIG": str(empty_mcp_config),
             "AGENT_WORKSPACE": str(workspace),
             "OPENAI_API_KEY": "local-tui-approval-smoke",
             "OPENAI_BASE_URL": base_url,

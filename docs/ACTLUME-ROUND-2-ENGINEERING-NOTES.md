@@ -365,6 +365,36 @@
 - 未覆盖边界：驱动验证 Linux PTY 的键盘路由和拒绝结果，不评估真人对审批焦点、按钮强调、可读性或屏幕渲染的体验；Windows 与人工完整矩阵/录屏仍待验收。
 - 状态：自动审批拒绝 smoke 已修复并通过；人工终端验收仍待执行。
 
+## 2026-10-07：Windows 扩展路径命名空间让合法 artifact 被误判为越界
+
+- 关联：R5-08、R6-07。
+- 触发/观察：PR #1 的 Windows hosted job 在 `src/tools/artifact.test.ts` 中失败；相同候选的 Ubuntu job 通过。Windows 失败发生在 `readArtifact` 读取 memory artifact，调用方使用的是有效文件路径。
+- 根因：Windows 可以用 `\\?\\` 扩展长度命名空间表示同一文件。实现先对 `resolve(candidate)` 与普通 workspace root 做词法 `relative()` 比较，两个等价路径的拼写不同，因而在验证 canonical path 前就拒绝了合法文件。
+- 采用方案与替代方案：保留请求路径的越界判断，先对候选文件执行 `realpath()`，再比较 canonical path，并将真正的符号链接逃逸与请求路径越界区分。增加 Windows 回归测试，直接用 `\\?\\` 路径读取同一 artifact。替代方案是删除 Windows 路径输入或忽略 hosted job；前者不符合本机路径语义，后者会留下跨平台回归。
+- 验证证据：候选 `sha256:e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03` 的 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；原生 Linux `release:dry` 也通过。定向 Windows artifact/runtime 测试 22/22 通过。修复已进入 PR #1，最新 hosted rerun 尚待确认。
+- 未覆盖边界：WSL2/ext4 Linux 本地通过不等同 hosted Linux runner；最新 PR 双平台 job 仍须通过。
+- 状态：修复已验收本地；托管复验待执行。
+
+## 2026-10-07：dotenv 覆盖与全局 Pi/MCP 配置污染测试边界
+
+- 关联：R6-03、R6-09。
+- 触发/观察：审批 PTY smoke 初版中，测试显式配置的 localhost provider 没有收到请求（本地 mock `providerRequestCount=0`），TUI 却显示了另一模型配置并提示发现额外 MCP server，随后出现 shell 拒绝流程。该运行无法证明请求始终留在本地；当时没有记录实际请求的最终 endpoint 或完整 payload，因此不能确定是否触达配置中的外部 provider，也不能把该次记录算作有效 smoke。此前发送字符 `n` 的审批尝试也曾误选默认 Yes，单独在隔离临时仓库运行且已在历史条目中记为无效。
+- 根因：`src/main.ts` 用 `dotenv.config({ override: true })` 让项目 `.env` 覆盖了测试进程显式传入的 endpoint/model；PTY 子进程又继承开发机 Pi 配置和 MCP 设置。测试 server 的计数为零只证明请求没有到该 localhost server，不能据此宣称没有其他请求。
+- 采用方案与替代方案：改为 dotenv 仅补充缺失环境变量，显式进程配置保持优先；新增 `/doctor` 子进程集成回归验证 endpoint/model 优先级和 key 不回显。PTY smoke 为每次运行创建独立 `PI_CODING_AGENT_DIR`、设置 `PI_OFFLINE=1`、写入空 MCP 配置，并使用本地 deterministic provider。审批选择按弹窗指引使用 Down+Enter 到 No，然后检查 provider tool reply、无命令输出和退出码。替代方案是只检查弹窗文本，无法验证实际请求目标、选择结果和副作用。
+- 验证证据：候选 `sha256:e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03` 中 `/doctor` dotenv 回归通过；隔离 Linux PTY 审批报告 `.agent-benchmark/demo/tui-approval-pty-e34d0393-native/tui-approval-smoke.json` 记录 `providerRequestCount=2`、无 provider errors、弹窗可见、No 已发送、`User rejected shell.`、命令输出未进入 tool reply、exit 0。
+- 未覆盖边界：初版污染运行的 endpoint 与 payload 无法从已保存证据还原，故保持未知并排除，不推断“已发送”或“没有发送”。用户原有本地配置未修改；仅清理了本轮创建的临时 WSL 副本。确定性 mock 验证隔离路径，不代替真实 provider 的独立显式探针。
+- 状态：隔离缺陷和回归已修复并在当前候选通过；初版 smoke 永久不计为通过证据。
+
+## 2026-10-07：整树复制 Windows checkout 造成 ext4 候选出现 CRLF 噪声
+
+- 关联：R0-01、R4-03、R6-07。
+- 触发/观察：为用 WSL2 原生 Linux 复验 Windows 工作区的最后几处修改，将整个 Windows checkout 覆盖到既有 ext4 副本后，manifest 报出 172 个文件变化，而真实候选仅包含少量有意修改。
+- 根因：全树复制经过 Windows/WSL 文本换行处理，CRLF/LF 差异把未修改文件也标成 dirty；若直接对该副本跑验收，会让候选哈希与 Windows 工作区不一致。
+- 采用方案与替代方案：重置隔离 ext4 clone，只复制六个明确修改过的源码/驱动文件，再运行相同 manifest。Windows 与 Linux manifest 最终都得到 `e34d0393…cc03`、4 个 production inputs。替代方案是继续使用全树复制，但会污染候选身份；只依赖托管 Linux CI 则不能在本地快速定位复制层错误。
+- 验证证据：`.agent-benchmark/windows-ci/manifest-final-after-dotenv-isolation.json` 与 `.agent-benchmark/linux-ci/manifest-final-e34d0393-native.json` 的候选 SHA、Node 版本和 4 个输入哈希一致；两端 release dry 均通过。
+- 未覆盖边界：这解决的是本地快照一致性；托管 CI 仍用独立 checkout 和平台 runner 验证。
+- 状态：候选副本已清理并复验一致。
+
 ## 难题条目模板
 
 复制此结构并填写，不存在的证据标为未知：

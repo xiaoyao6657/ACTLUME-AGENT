@@ -1,6 +1,6 @@
 # Actlume 第二轮工作规划
 
-日期：2026-10-06。最新源码候选为 `sha256:1897300da47ce4047a5cddbb0af6b4e1efb3dc3862e7c05ddd22e1145e59677f`（126 个生产输入，HEAD `256e476ef5bdd624526c1ea306c755fd4ad354e7`）。Windows 与 Ubuntu 24.04 WSL2（原生 Linux Node 24.14.1、ext4 候选副本）均通过 `release:dry`：typecheck、191/191 tests、16/16 benchmarks、116-file npm pack；九卡 deterministic protocol/oracle 两端均为 9/9；两端 package smoke 和 15 卡 fixture preflight 也通过。旧 WSL Linux 日志曾通过 Windows `node.exe` 运行，不能作为 Linux 证据；已在 [工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md) 更正。Windows 与 Linux 的 80×24 PTY 启动、扩展显示、Unicode/多行粘贴和 Ctrl-D 退出 smoke 记录来自 README-only 前一版 `8171…e831`，运行时文件一致；它们不等同于人工 IME/缩放/审批矩阵或连续屏幕演示。托管 GitHub Actions 尚未触发。真实模型 campaign 的源码候选是 `eb941e32…36c4ca`；它与当前 `189…677f` 仅 `README.md`、`README.en.md` 不同，策略结果仍为混合，provider revision/sampling unknown，确认集复用了既有卡片，不能得出策略收益或 unseen-task 泛化结论。完整本地证据见 [任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md) 和 [源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)。
+日期：2026-10-07。当前源码候选为 `sha256:e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03`（4 个生产输入变更，基线 HEAD `0829c3a543a67f82065b8d5f6051693f59ad8261`）。Windows 与 Ubuntu 24.04 WSL2/ext4 原生 Linux 均通过 typecheck、192/192 tests、16/16 benchmarks、116-file npm pack；九卡 deterministic protocol/oracle、生产包 smoke、15 卡 fixture preflight 两端均通过。Linux 自动 PTY 输入/resize/退出、审批拒绝及中断恢复也通过。PR #1 旧 hosted run 曾出现 Ubuntu pass、Windows artifact path fail；修复已进入当前候选，最新 PR Actions 仍待复验。dotenv/全局 Pi 与 MCP 环境污染已隔离并增加回归测试。真实模型 campaigns 运行于旧源码候选 `eb941e32…36c4ca`，当前候选有 4 个生产输入差异，旧结果不代表 e34 的精确复现实验；不能据此声称策略收益。证据索引见[任务追踪表](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-TASK-TRACKER.md)、[源码基线](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-BASELINE.md)和[工程难题记录](D:/workspace/actlume-agent/docs/ACTLUME-ROUND-2-ENGINEERING-NOTES.md)。
 
 依据：[原改造计划](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-PLAN.md)、[本轮验收评估](D:/workspace/actlume-agent/docs/ACTLUME-REFACTOR-ASSESSMENT-2026-10-05.md)、[Pi 宿主架构决策](D:/workspace/actlume-agent/docs/adr/0001-pi-cli-runtime.md)。
 
@@ -114,7 +114,7 @@
 
 - [x] R2-01 将 AbortSignal、task/session/call 身份贯通 Pi adapter → ToolContext → 工具执行。
 - [x] R2-02 shell 区分正常退出、超时、取消和启动失败；记录实际 shell/cwd，避免取消被编码成普通可重试失败。
-- [x] R2-03 实现平台对应的进程树终止和退出确认。Windows 子进程树夹具通过；当前候选 `189…677f` 的 Ubuntu 24.04 WSL2 原生 Linux protocol `interrupt-recovery-01` 确认受控进程停止、同一 session/task 恢复且没有重放写入。Linux 九卡汇总为 `.agent-benchmark/linux-ci/protocol-runs/summary-1897300d-native.json`。更早通过 Windows Node 生成的 WSL 记录不作为 Linux 证据。托管 CI 单独记录在 R6-07。
+- [x] R2-03 实现平台对应的进程树终止和退出确认。Windows 子进程树夹具通过；当前候选 `e34d0393…cc03` 的 Ubuntu 24.04 WSL2 原生 Linux protocol `interrupt-recovery-01` 确认受控进程停止、同一 session/task 恢复且没有重放写入。Linux 汇总 `.agent-benchmark/linux-ci/protocol-runs/summary-final-e34d0393-native.json`。托管 CI 单独记录在 R6-07。
 - [x] R2-04 文件工具在执行前检查取消；已经执行的写入保留真实结果，不因 signal 到来假称撤销。
 - [x] R2-05 检查 Pi MCP 的取消支持与实际副作用；远端确认不足时记录 unknown。
 - [x] R2-06 父取消传给只读子任务；不确定的执行结果不得自动重试或写入长期有效记忆。
@@ -188,7 +188,7 @@ Runtime 状态约束：收到请求后进入 cancelling；确认本地执行停�
 
 - [x] R4-01 引入 PolicyConfig 与规则 ID/版本，完成效率/任务策略分层。
 - [x] R4-02 增加 task manifest、fixture materializer 和独立 oracle。
-- [x] R4-03 实现 runner：准备 → 执行/故障注入 → 等待结束 → 外部验收 → 采集 → 保存原始结果；当前候选 Windows 与原生 Linux 各九张 protocol/oracle 卡均为 9/9，详见 `.agent-benchmark/protocol-runs/final-1897300d-*.json`、`.agent-benchmark/protocol-runs/summary-1897300d.json` 与 `.agent-benchmark/linux-ci/protocol-runs/final-1897300d-native-*.json`。这些报告只验证 harness/runtime contract。
+- [x] R4-03 实现 runner：准备 → 执行/故障注入 → 等待结束 → 外部验收 → 采集 → 保存原始结果；当前候选 Windows 与原生 Linux 各九张 protocol/oracle 卡均为 9/9，详见 `.agent-benchmark/protocol-runs/final-e34d0393-*.json`、`.agent-benchmark/protocol-runs/summary-final-e34d0393-windows.json` 与 `.agent-benchmark/linux-ci/protocol-runs/final-e34d0393-native-*.json`。这些报告只验证 harness/runtime contract。
 - [x] R4-04 事件自动生成 Eval 记录；模型请求、工具请求/实际执行/拦截、重试、usage、压缩辅助调用分别计数。
 - [x] R4-05 paired comparison 校验全部不变量：候选代码、任务/fixture、输入 hash、模型/provider/revision、采样参数、权限/工具集、环境、预算与中断协议。
 - [x] R4-06 task 输入 hash 与策略/最终 system context hash 分开；记忆注入是预定 treatment，不能因它改变 system prompt 就误判任务不一致，也不能漏记该变化。
@@ -233,9 +233,9 @@ Runtime 状态约束：收到请求后进入 cancelling；确认本地执行停�
 - [x] R6-04 关闭未经控制的扩展自动加载，明确接入需要的 Pi 内置扩展（含 MCP）；设置最终工具 allowlist，测试本机/项目额外扩展不能扩大只读子任务工具集。
 - [x] R6-05 更新依赖版本与发布策略，移除运行时 latest；先完成生产依赖入口，若编译 dist 会破坏 Pi extension 加载则保留明确的 TS/tsx 运行时方案并验收。
 - [x] R6-06 在唯一临时目录安装 npm pack 产物和生产依赖，运行 help、非交互 mock 任务、工具加载、resume 和入口启动。
-- [ ] R6-07 CI 在 Windows/Linux 执行关键生命周期、进程取消和产物安装 smoke；真实模型实验独立于无密钥 CI。当前候选 `189…677f` 的 Windows 与 Ubuntu 24.04 WSL2 原生 Linux已通过 `release:dry`（191 tests、16 benchmarks、116-file pack）、九卡 protocol、生产包 smoke 和 15 张 fixture preflight；最新 release logs 为 `.agent-benchmark/windows-ci/release-dry-1897300d-current-final.log` 与 `.agent-benchmark/linux-ci/release-dry-1897300d-native-ext4.log`。旧 Linux package/fixture-preflight 记录因运行在 Windows Node 上已撤销。`.github/workflows/ci.yml` 仅配置 `push: main` 与 `pull_request: main`；当前开发分支未推送，远端分支枚举只有 `main`，本机未安装 `gh`。Hosted run 仍需提交/推送该候选并开 PR 后收集 Actions 链接与双平台日志。
+- [ ] R6-07 CI 在 Windows/Linux 执行关键生命周期、进程取消和产物安装 smoke；真实模型实验独立于无密钥 CI。当前候选 `e34d0393…cc03` 在 Windows 与 Ubuntu 24.04 WSL2 原生 Linux/ext4 本地通过 `release:dry`（typecheck、192 tests、16 benchmarks、116-file pack）、九卡 protocol/oracle、生产包 smoke 和 15 卡 fixture preflight。Windows/Linux dry logs：`.agent-benchmark/windows-ci/ci-final-e34d0393.log`、`.agent-benchmark/linux-ci/release-dry-final-e34d0393-native.log`；package smoke logs：`.agent-benchmark/windows-ci/package-smoke-final-e34d0393.log`、`.agent-benchmark/linux-ci/package-smoke-final-e34d0393-native.log`。PR #1 的先前 hosted run 中 Ubuntu 通过、Windows 因 artifact 路径回归失败；修复已包含在此候选，推送后必须确认最新 PR commit 的两端 Actions 均通过。
 - [x] R6-08 对 MCP startupTimeout/toolPrefix 等旧配置给出迁移诊断，不能静默声称行为等价。
-- [ ] R6-09 完成终端矩阵和短演示，同步 README/CHANGELOG/命令帮助/兼容说明。README/help/CHANGELOG 已同步；最终候选 `189…677f` 的中断恢复场景有 native Linux PTY transcript/oracle 报告 `.agent-benchmark/demo/interrupt-recovery-1897300d-native.{typescript,json}`。当前候选另有可复现自动 PTY 驱动 [`docs/support/tui-pty-smoke.py`](D:/workspace/actlume-agent/docs/support/tui-pty-smoke.py) 与记录 `.agent-benchmark/demo/tui-pty-matrix-1897300d-native/tui-pty-smoke.{json,typescript}`：80×24 启动、Unicode/emoji bracketed multiline paste、resize 到 120×40、Ctrl+C/Ctrl+D、退出码 0 和 canonical/echo/signal 模式恢复均通过。另有 [`docs/support/tui-approval-pty-smoke.py`](D:/workspace/actlume-agent/docs/support/tui-approval-pty-smoke.py) 以本地 deterministic provider 验证 TUI 审批对话显示、方向键选 No、tool reply 为 `User rejected shell.`、未执行命令且正常退出；报告/transcript 在 `.agent-benchmark/demo/tui-approval-pty-1897300d-native/tui-approval-smoke.{json,typescript}`。这些自动 PTY 证据不等同于真人视觉/IME 验收或交互录屏。前一版 Windows PowerShell PTY 与 Linux 80×24 smoke 记录仍见 `.agent-benchmark/windows-ci/tui-matrix-8171.{json,log}`、`.agent-benchmark/linux-ci/tui-matrix-8171-native.{json,log}`。OS IME 组合、真人审批焦点、长历史、人工视觉复核及交互 TUI 连续录制仍待执行。
+- [ ] R6-09 完成终端矩阵和短演示，同步 README/CHANGELOG/命令帮助/兼容说明。文档/help 已同步。当前候选 `e34d0393…cc03` 有 Linux 原生 PTY 中断恢复记录 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.{typescript,json}`；自动尺寸/输入/退出报告 `.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/tui-pty-smoke.{json,typescript}` 覆盖 80×24、Unicode/emoji 多行粘贴、resize 到 120×40、Ctrl+C/Ctrl+D、exit 0 与终端模式恢复；隔离 deterministic provider 的审批拒绝报告 `.agent-benchmark/demo/tui-approval-pty-e34d0393-native/tui-approval-smoke.{json,typescript}` 确认 Down+Enter 选 No、tool reply 为 `User rejected shell.`、命令未执行且正常退出。自动 PTY 不等同真人视觉/IME验收或录屏。Windows/Linux 中文 IME、长历史、人工审批焦点和视觉复核、连续交互录屏仍待人工执行。
 
 ### 终端矩阵
 
@@ -249,11 +249,11 @@ Windows Terminal + PowerShell 和 Linux 终端；80×24 与 120×40；中文 IME
 
 ```sh
 python3 /mnt/d/workspace/actlume-agent/docs/support/tui-pty-smoke.py \
-  --workspace /root/actlume-8171-ext4 \
-  --expected-candidate 1897300da47ce4047a5cddbb0af6b4e1efb3dc3862e7c05ddd22e1145e59677f \
+  --workspace /root/actlume-round2-55a71eac-ext4 \
+  --expected-candidate e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03 \
   --node /root/.local/actlume-node-v24.14.1/bin/node \
   --path-prefix /root/.cache/actlume-pi-cli-test-8171/bin \
-  --output-dir /root/actlume-8171-ext4/.agent-benchmark/demo/tui-pty-matrix-1897300d-native
+  --output-dir /root/actlume-round2-55a71eac-ext4/.agent-benchmark/demo/tui-pty-matrix-e34d0393-native
 ```
 
 网络/TLS 或外部 runner 不可用时保存精确日志和待执行命令，继续其他本地任务；对应 gate 保持未通过，不能将其变成“整体完成”。
@@ -274,11 +274,11 @@ python3 /mnt/d/workspace/actlume-agent/docs/support/tui-pty-smoke.py \
 
 ### 工作与产物
 
-- [x] R7-01 保存冻结配置、任务版本、执行顺序、原始事件/patch/artifact/oracle 输出；旧 `round2-core-dev` 保留 1/24，候选 `round2-core-dev-01372678` 保留 6/24 与 18 条未启动，候选 `round2-core-dev-c3e044f5` 保留 4/24 与 20 条未启动，当前候选 `round2-core-dev-eb941e32` 完成 24/24；最终候选 holdout `round2-holdout-eb941e32` 已冻结 8 次执行顺序并逐 attempt 保存结果。初始四卡 holdout 与两个独立 supplement manifest/result 仍分别保留。
-- [x] R7-02 形成最终实验报告，包含分母、条件、未知量、失败归因、效果与代价。报告分别记录当前候选 development 24/24 与 post-freeze confirmation 8/8、分条件 oracle/runtime 结果、usage/token 分母、复用卡片与未知 revision/sampling 限制；没有声称策略收益。
+- [x] R7-01 保存冻结配置、任务版本、执行顺序、原始事件/patch/artifact/oracle 输出；旧 `round2-core-dev` 保留 1/24，候选 `round2-core-dev-01372678` 保留 6/24 与 18 条未启动，候选 `round2-core-dev-c3e044f5` 保留 4/24 与 20 条未启动；源码候选 `eb941e32` 的 `round2-core-dev` 完成 24/24，`round2-holdout-eb941e32` 保存 post-freeze confirmation 8 次执行及每 attempt 结果。当前源码候选 e34 与实验候选有 4 个 production-input 差异，详见 R7-02/G7 和剩余清单。
+- [x] R7-02 形成实验报告，包含分母、条件、未知量、失败归因、效果与代价。报告记录源码候选 `eb941e32` 的 development 24/24、post-freeze confirmation 8/8、分条件 oracle/runtime 结果、usage/token 分母、复用卡片与未知 revision/sampling 限制；不声称策略收益。实验候选和当前 `e34d0393…cc03` 有 4 个 production-input 差异，因此报告是已运行候选的有效历史结果，不是当前源码的精确复现实验。
 - [x] R7-03 提炼至少两个真实失败案例：现象、根因、方案、替代方案、验证和局限。
 - [x] R7-04 更新架构图，清楚区分 Pi 复用能力与 Actlume 自研机制。
-- [x] R7-05 录制连续任务 → 中断/取消 → 恢复 → 检查或记忆失效 → 正确处理的演示。当前候选 Ubuntu 24.04 WSL2 原生 Linux PTY capture `.agent-benchmark/demo/interrupt-recovery-1897300d-native.typescript` 与结构化报告 `.agent-benchmark/demo/interrupt-recovery-1897300d-native.json` 显示 phase 1 `interrupted/unknown`、phase 2 同 session/task `completed/checks_passed`、进程已终止、没有重复编辑、required check 通过、oracle pass。它是 PTY 文本录制，不是交互 TUI 视频；后者仍列在 R6-09/G6。
+- [x] R7-05 录制连续任务 → 中断/取消 → 恢复 → 检查或记忆失效 → 正确处理的演示。当前候选 Ubuntu 24.04 WSL2 原生 Linux PTY capture `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.typescript` 与结构化报告 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.json` 显示 phase 1 `interrupted/unknown`、phase 2 同 session/task `completed/checks_passed`、进程已终止、没有重复编辑、required check 通过、独立 oracle pass。它是 PTY 文本录制，不是交互 TUI 视频；后者仍列在 R6-09/G6。
 - [x] R7-06 简历每项能力和数字关联到产物；未经验证的恢复、协作收益与 Trace 仍保持限定表达。
 
 ## 11. R8：已有可选原型的收尾
@@ -313,12 +313,12 @@ Trace 增加 HTTP 状态处理、可观测的丢失计数、受限队列、退�
 | Gate | 完成条件 | 对应阶段 | 当前状态 |
 | --- | --- | --- | --- |
 | G1 连续性 | 多轮、活动分支和真实进程重启恢复通过，原 task baseline 不丢失 | R1 | 本地通过；Windows 强制中断/恢复已有独立 Eval 证据 |
-| G2 取消 | Windows/Linux 受控进程树取消通过，未决副作用保留 unknown | R2 | 当前候选 `189…677f` 的 Windows 与 Ubuntu 24.04 WSL2 原生 Linux中断恢复协议通过；Linux `interrupt-recovery-01` 确认运行树停止、同一 session/task 恢复且没有重放写入。两端九卡报告前缀分别为 `.agent-benchmark/protocol-runs/final-1897300d-` 和 `.agent-benchmark/linux-ci/protocol-runs/final-1897300d-native-`。托管 CI 单独由 G6 跟踪 |
-| G3 证据 | 空检查不能冒充验证，版本/范围/要求变化使证据失效，UI/JSONL/回放语义一致 | R3 | 本地通过；当前候选 `189…677f` 的 Windows 和原生 Linux `release:dry` 均含 191/191 tests、16/16 benchmarks 和 116-file pack |
-| G4 评测协议 | 核心九张卡可执行，独立 oracle、隔离 attempt、策略开关和严格配对通过 | R4、R5 | 当前候选 `189…677f` 的 Windows 与 Ubuntu 24.04 WSL2 原生 Linux protocol/oracle 均为 9/9 pass；Linux 汇总 `.agent-benchmark/linux-ci/protocol-runs/summary-1897300d-native.json`。这些报告只验协议和 validator，不代表模型质量 |
+| G2 取消 | Windows/Linux 受控进程树取消通过，未决副作用保留 unknown | R2 | 当前候选 `e34d0393…cc03` 的 Windows 与 Ubuntu 24.04 WSL2 原生 Linux中断恢复协议通过；Linux `interrupt-recovery-01` 确认运行树停止、同一 session/task 恢复且没有重放写入。两端九卡报告前缀分别为 `.agent-benchmark/protocol-runs/final-e34d0393-` 和 `.agent-benchmark/linux-ci/protocol-runs/final-e34d0393-native-`。托管 CI 单独由 G6 跟踪 |
+| G3 证据 | 空检查不能冒充验证，版本/范围/要求变化使证据失效，UI/JSONL/回放语义一致 | R3 | 本地通过；当前候选 `e34d0393…cc03` 的 Windows 与原生 Linux `release:dry` 均含 192/192 tests、16/16 benchmarks 和 116-file pack |
+| G4 评测协议 | 核心九张卡可执行，独立 oracle、隔离 attempt、策略开关和严格配对通过 | R4、R5 | 当前候选 `e34d0393…cc03` 的 Windows 与 Ubuntu 24.04 WSL2 原生 Linux protocol/oracle 均为 9/9 pass；Linux 汇总 `.agent-benchmark/linux-ci/protocol-runs/summary-final-e34d0393-native.json`。这些报告只验协议和 validator，不代表模型质量 |
 | G5 记忆/上下文 | 未见跨会话任务、过期配置、替代、分支及压缩连续性通过 | R5 | 本地通过；新增 Pi SessionManager 三次 compaction + reopen 集成回归并验证 artifact 回读 |
-| G6 产品交付 | 干净生产安装、远端双平台 CI、终端矩阵及演示有实际证据 | R6 | 当前候选 `189…677f` 的 Windows 和 Ubuntu 原生 Linux `release:dry`/生产包 smoke 均通过，package reports 为 `.agent-benchmark/windows-ci/package-smoke-1897300d.json` 和 `.agent-benchmark/linux-ci/package-smoke-1897300d-native-ext4.json`；最终候选中断恢复 transcript/oracle 为 `.agent-benchmark/demo/interrupt-recovery-1897300d-native.{typescript,json}`，Linux PTY resize/input/exit smoke 与本地 deterministic provider 审批拒绝 smoke 分别在 `.agent-benchmark/demo/tui-pty-matrix-1897300d-native/` 和 `.agent-benchmark/demo/tui-approval-pty-1897300d-native/`。尚未运行托管 GitHub Actions；OS IME、真人审批焦点、长历史人工矩阵、人工视觉复核及交互 TUI 连续录屏待验 |
-| G7 真实实验 | 固定/如实记录模型条件，重复与保留任务结果、失败和局限可复现 | R7 | 实验流程与报告完成。当前候选 bounded smoke 5/5 usage-known；development 24/24、1,340,985 tokens、usage 完整，oracle pass/fail/unknown 9/9/6；post-freeze confirmation 8/8、456,249 tokens、usage 完整，oracle 6 pass/2 fail。holdout 卡此前已在其他候选/补充批次使用，故不称为盲测；provider revision/sampling unknown，不能推断策略收益或价格。G7 仅表示计划中的运行/报告交付完成，不是改善证明 |
+| G6 产品交付 | 干净生产安装、远端双平台 CI、终端矩阵及演示有实际证据 | R6 | 当前候选 `e34d0393…cc03` 的 Windows 和 Ubuntu 原生 Linux `release:dry`/生产包 smoke 均通过，分别见 `.agent-benchmark/windows-ci/package-smoke-final-e34d0393.log`、`.agent-benchmark/linux-ci/package-smoke-final-e34d0393-native.log`；Linux 自动 PTY 与审批拒绝 smoke 在 `.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/`、`.agent-benchmark/demo/tui-approval-pty-e34d0393-native/`，中断恢复报告在 `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.{typescript,json}`。PR #1 先前 Windows hosted job 失败并已修复，最新 commit 的远端复验待执行；OS IME、真人审批焦点、长历史人工矩阵、人工视觉复核及交互 TUI 连续录屏待验 |
+| G7 真实实验 | 固定/如实记录模型条件，重复与保留任务结果、失败和局限可复现 | R7 | 实验 campaign 与报告对源码候选 `eb941e32…36c4ca` 已完成：bounded smoke 5/5 usage-known；development 24/24、1,340,985 tokens；post-freeze confirmation 8/8、456,249 tokens；oracle结果与失败均在报告中。当前 `e34d0393…cc03` 有 4 个生产输入变化，实验是旧候选证据、非当前候选精确复验；holdout 卡曾复用，provider revision/sampling unknown，不推断策略收益或价格。 |
 
 全部 G1–G7 通过，才可宣布原计划 M0–M5 第一版改造完成。收益不显著不算未完成，但没有运行实验、外部 gate 未验收或测试被跳过不能算通过。R8 单独报告，不作为原核心版本的替代证据。
 
@@ -328,9 +328,9 @@ Trace 增加 HTTP 状态处理、可观测的丢失计数、受限队列、退�
 
 当前工作区内可复现的实现和确定性测试已经完成。以下门槛没有相应平台、人工交互或真实 provider 证据前不能勾选：
 
-1. 在托管 GitHub Actions 上实际运行双平台 workflow 并保存链接/日志；当前本地候选 `189…677f` 的 Windows 和 Ubuntu WSL2 原生 Linux已通过 `release:dry`、九卡 deterministic protocol、production package smoke 和 15 卡 fixture preflight，Windows/Linux dry logs 分别为 `.agent-benchmark/windows-ci/release-dry-1897300d-current-final.log` 和 `.agent-benchmark/linux-ci/release-dry-1897300d-native-ext4.log`。workflow 仅响应 push main/PR main；当前分支未推送、origin 仅见 main，hosted workflow 仍待提交推送并开 PR 触发。旧 WSL package/fixture 记录无效。
+1. 在托管 GitHub Actions 上实际运行双平台 workflow 并保存链接/日志。PR #1 的上一候选 Ubuntu 通过、Windows 失败，根因为 Windows artifact 路径规范化回归；`e34d0393…cc03` 已在本地 Windows/Linux 修复并通过 192 tests、16 benchmarks、package smoke，需推送此候选并检查最新 PR commit 的 Actions 双平台结果。
 2. 完成 Windows Terminal 与 Linux 的人工终端矩阵和连续屏幕演示，记录中文 IME 组合、缩放、审批焦点和终端恢复；最终候选已有原生 Linux自动 PTY 80×24→120×40、Unicode 多行输入、Ctrl+C/Ctrl+D、termios 恢复，以及 deterministic provider 的审批拒绝证据，但不替代人工 IME/焦点/视觉验收或交互录屏。
-3. 真实模型 bounded smoke、development 24/24 及 post-freeze confirmation 8/8 使用 `eb941e32…36c4ca` 源码候选；当前 `189…677f` 与它只在 README 两文件有差异。usage 完整，但 provider revision/sampling unknown，确认集复用了此前卡片，不从该有限分母推导普遍策略收益。
+3. 真实模型 bounded smoke、development 24/24 及 post-freeze confirmation 8/8 使用 `eb941e32…36c4ca` 源码候选；当前 `e34d0393…cc03` 对 artifact 读取路径与 dotenv 优先级有 4 个生产输入差异，因此这些实验是历史候选证据，不是 e34 的精确复现实验。旧实验 usage 完整，但 provider revision/sampling unknown、确认集复用卡片，不能由此推断当前候选策略收益。
 4. 当前没有可归因的并行写/托管 Trace 收益，R8-03 已决定暂缓新功能；若后续获得可靠核心实验，再重新开范围决策。
 
 ## 15. 难题记录规范

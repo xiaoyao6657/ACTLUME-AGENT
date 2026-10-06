@@ -43,7 +43,8 @@ import type { AgentHistoryItem, PermissionMode, SecurityPolicy, ToolConfirmation
 import { tools as localTools } from "./tools/registry.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-config({ path: resolve(projectRoot, ".env"), override: true, quiet: true });
+// Keep explicit process/CI settings authoritative; .env fills in only missing values.
+config({ path: resolve(projectRoot, ".env"), quiet: true });
 
 type CliState = {
   workspace: string;

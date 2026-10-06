@@ -22,10 +22,13 @@ test("readArtifact accepts artifacts inside memoryDir and rejects paths outside 
     securityPolicy: defaultSecurityPolicy
   };
   try {
-    const result = await readArtifactTool.run({ path: artifact, limit: 5 }, ctx);
+    // Windows' extended-length path namespace is a valid spelling of the same file,
+    // but lexical path comparison treats it as a different root from realpath().
+    const artifactInputPath = process.platform === "win32" ? "\\\\?\\" + artifact : artifact;
+    const result = await readArtifactTool.run({ path: artifactInputPath, limit: 5 }, ctx);
     assert.equal(result.ok, true);
     if (result.ok) assert.match(result.content, /full /);
-    const next = await readArtifactTool.run({ path: artifact, offset: 5 }, ctx);
+    const next = await readArtifactTool.run({ path: artifactInputPath, offset: 5 }, ctx);
     assert.equal(next.ok, true);
     if (next.ok) assert.match(next.content, /output/);
 
