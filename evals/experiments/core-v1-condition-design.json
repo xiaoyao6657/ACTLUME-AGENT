@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "actlume-core-v1-condition-design",
+  "status": "design-only-not-frozen",
+  "purpose": "Define executable causal profiles before freezing a candidate, run order, and spend budget.",
+  "sharedControls": {
+    "taskFixture": "must-match-within-pair",
+    "candidateSnapshot": "must-match-within-pair",
+    "providerModelAndSampling": "record-as-reported; unknown-values-exclude-strict-pairing",
+    "permissionMode": "must-match-within-pair",
+    "oracleAndCheckSpecs": "identical-across-conditions",
+    "headlessCheckSpecApproval": "same-Eval-only-opt-in; autoapprove-only-exact-configured-CheckSpec-command; all-other-headless-approval-blocked",
+    "attemptWorkspaceAndMemoryStore": "fresh-and-isolated-per-attempt",
+    "toolSurface": "same-tool-schema; disabled-memory-tools-return-a-no-side-effect-treatment-response",
+    "budget": "must-match-within-pair"
+  },
+  "conditions": [
+    {
+      "id": "pi-native-reference",
+      "runtime": "pi-native",
+      "role": "descriptive-reference-only",
+      "memory": "native",
+      "policies": null
+    },
+    {
+      "id": "actlume-control",
+      "runtime": "actlume",
+      "role": "causal-control",
+      "memory": "disabled",
+      "policies": {
+        "actlume.workflow.efficiency": "disabled",
+        "actlume.task.scope-precheck": "disabled"
+      }
+    },
+    {
+      "id": "actlume-memory",
+      "runtime": "actlume",
+      "role": "memory-treatment",
+      "memory": "enabled",
+      "policies": {
+        "actlume.workflow.efficiency": "disabled",
+        "actlume.task.scope-precheck": "disabled"
+      }
+    },
+    {
+      "id": "actlume-guardrails",
+      "runtime": "actlume",
+      "role": "guardrail-treatment",
+      "memory": "disabled",
+      "policies": {
+        "actlume.workflow.efficiency": "enforce",
+        "actlume.task.scope-precheck": "enforce"
+      }
+    },
+    {
+      "id": "actlume-full",
+      "runtime": "actlume",
+      "role": "combined-treatment",
+      "memory": "enabled",
+      "policies": {
+        "actlume.workflow.efficiency": "enforce",
+        "actlume.task.scope-precheck": "enforce"
+      }
+    }
+  ],
+  "primaryComparisons": [
+    { "control": "actlume-control", "treatment": "actlume-memory", "changedFactors": ["memory"] },
+    { "control": "actlume-control", "treatment": "actlume-guardrails", "changedFactors": ["policies"] },
+    { "control": "actlume-control", "treatment": "actlume-full", "changedFactors": ["memory", "policies"], "interactionAnalysis": "exploratory" }
+  ],
+  "limitations": [
+    "This is a condition design, not an executed or frozen experiment manifest.",
+    "pi-native uses different tools/runtime and is descriptive only; it is excluded from causal attribution.",
+    "Do not freeze execution order or spend until candidate, fixture/task revisions, holdout tasks, and provider limits are recorded."
+  ]
+}

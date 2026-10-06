@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "holdout-stale-memory-01",
+  "category": "memory-transfer",
+  "prompt": "Learning phase: inspect deploy.json, run the configured publish command, and save the verified command and deploy.json source as candidate project memory named exactly 'Verified deploy workflow'. Before the fresh follow-up, the deployment configuration changes. Use the current deploy.json to publish the expected release and pass the repository test; treat remembered commands as fallible.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    "deploy.json": "{\"command\":\"node publish-v1.mjs\",\"target\":\"release-v1\"}\n",
+    "publish-v1.mjs": "import { readFile, writeFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('deploy.json', 'utf8'));\nawait writeFile('release.txt', `${config.target}\\n`);\n",
+    "publish-v2.mjs": "import { readFile, writeFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('deploy.json', 'utf8'));\nawait writeFile('release.txt', `${config.target}\\n`);\n",
+    "release.txt": "",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('deploy.json', 'utf8'));\nconst release = await readFile('release.txt', 'utf8');\nassert.equal(release.trim(), config.target);\n",
+    ".actlume/checks.json": "{\"schemaVersion\":1,\"checks\":[{\"id\":\"holdout-deploy-test\",\"command\":\"npm test\",\"cwd\":\".\",\"kind\":\"test\",\"required\":true,\"scopePaths\":[\"release.txt\"],\"requiredFiles\":[\"deploy.json\",\"test.mjs\"],\"environmentFiles\":[\"deploy.json\",\"test.mjs\"],\"environmentKeys\":[]}]}\n"
+  },
+  "requiredFiles": ["deploy.json", "release.txt", "test.mjs", ".actlume/checks.json"],
+  "oracleId": "holdout-stale-memory-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Read deploy.json, run its configured command, and save the verified command plus deploy.json source as candidate project memory named exactly 'Verified deploy workflow'.",
+        "sessionKey": "learning",
+        "transitionAfter": {
+          "kind": "verify-and-promote-memory",
+          "memoryName": "Verified deploy workflow",
+          "command": "node publish-v1.mjs",
+          "updateFiles": { "deploy.json": "{\"command\":\"node publish-v2.mjs\",\"target\":\"release-v2\"}\n" }
+        }
+      },
+      {
+        "prompt": "Fresh-session follow-up: deploy.json changed. Read its current command and target, publish the configured release, and run npm test. Do not trust any remembered command without checking the current configuration.",
+        "sessionKey": "follow-up"
+      }
+    ]
+  }
+}

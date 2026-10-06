@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "stale-memory-01",
+  "category": "memory-transfer",
+  "prompt": "Learning phase: inspect build.json and verify the documented generated-file workflow. In a later fresh session, the configuration will change. Complete the new task using current evidence, and do not rely on any obsolete workflow memory.",
+  "files": {
+    "package.json": "{\"type\":\"module\"}\n",
+    "build.json": "{\"command\":\"node generate-v1.mjs\",\"output\":\"dist-v1\"}\n",
+    "generate-v1.mjs": "import { writeFile } from 'node:fs/promises';\nawait writeFile('dist-v1.txt', 'old');\n",
+    "generate-v2.mjs": "import { writeFile } from 'node:fs/promises';\nawait writeFile('result.txt', 'dist-v2\\n');\n",
+    "result.txt": ""
+  },
+  "requiredFiles": ["build.json", "result.txt"],
+  "oracleId": "stale-memory-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Learning phase: inspect build.json and verify the current generated-file command. Record its command and build.json source as a candidate repository memory named exactly 'Generated-file workflow'.",
+        "sessionKey": "learning",
+        "actions": [
+          { "toolName": "memorySave", "input": { "type": "project", "name": "Generated-file workflow", "description": "Verified generated-file command from the current build configuration", "content": "Verified generated-file command: node generate-v1.mjs. It reads build.json and generates dist-v1.", "scope": "repository", "sourceRefs": ["build.json", "generate-v1.mjs"], "applicabilityPaths": ["build.json"] } }
+        ],
+        "finalText": "I recorded the current generated-file workflow as a candidate memory.",
+        "transitionAfter": {
+          "kind": "verify-and-promote-memory",
+          "memoryName": "Generated-file workflow",
+          "command": "node generate-v1.mjs",
+          "updateFiles": { "build.json": "{\"command\":\"node generate-v2.mjs\",\"output\":\"dist-v2\"}\n" }
+        }
+      },
+      {
+        "prompt": "Fresh-session follow-up: the generated-file configuration has changed. Read current build.json and write result.txt according to the current v2 configuration. Treat any recalled workflow as fallible and do not rely on stale commands.",
+        "sessionKey": "follow-up",
+        "actions": [
+          { "toolName": "editPlan", "input": { "summary": "Follow the current v2 generated-file configuration", "expectedFiles": ["result.txt"], "steps": ["Inspect current configuration", "Use current v2 output"] } },
+          { "toolName": "memoryRecall", "input": { "query": "generated-file workflow build configuration", "limit": 5 } },
+          { "toolName": "readFile", "input": { "path": "build.json" } },
+          { "toolName": "writeFile", "input": { "path": "result.txt", "content": "dist-v2\n" } }
+        ],
+        "finalText": "I followed the current build.json configuration and wrote the v2 output."
+      }
+    ]
+  }
+}

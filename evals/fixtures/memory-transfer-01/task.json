@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "memory-transfer-01",
+  "category": "memory-transfer",
+  "prompt": "Learning phase: run the repository test and identify the exact command and covered files. Record the verified command as a candidate project memory with source references. Follow-up phase in a fresh session: use the relevant repository knowledge to implement normalizeTag in src/tag.js so it trims surrounding whitespace and lowercases the tag.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    "src/tag.js": "export function normalizeTag(value) {\n  return value.trim();\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { normalizeTag } from './src/tag.js';\nassert.equal(normalizeTag(' Actlume '), 'Actlume');\nassert.equal(typeof normalizeTag(''), 'string');\n"
+  },
+  "requiredFiles": ["src/tag.js", "test.mjs"],
+  "oracleId": "memory-transfer-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Learning phase: run the exact repository test command, identify the files it covers, and record the verified command as a candidate project memory named exactly 'Verified tag test command' with source references.",
+        "sessionKey": "learning",
+        "actions": [
+          { "toolName": "shell", "input": { "command": "npm test", "cwd": "." } },
+          { "toolName": "memorySave", "input": { "type": "project", "name": "Verified tag test command", "description": "Repository test command and covered files", "content": "Verified test command: npm test. It runs test.mjs against src/tag.js. The checked command passed on the unchanged fixture.", "scope": "repository", "sourceRefs": ["test.mjs", "src/tag.js"], "applicabilityPaths": ["test.mjs", "src/tag.js"] } }
+        ],
+        "finalText": "I recorded the passing npm test command and its source files as a candidate memory.",
+        "transitionAfter": { "kind": "verify-and-promote-memory", "memoryName": "Verified tag test command", "command": "npm test" }
+      },
+      {
+        "prompt": "Follow-up in a fresh session: recall the verified repository test command and use the related src/tag.js knowledge. Implement normalizeTag so it trims surrounding whitespace and lowercases the tag; update its regression test and run the remembered command.",
+        "sessionKey": "follow-up",
+        "actions": [
+          { "toolName": "editPlan", "input": { "summary": "Normalize tag values", "expectedFiles": ["src/tag.js", "test.mjs"], "steps": ["Inspect the current behavior", "Trim and lowercase tags", "Update and run the regression"] } },
+          { "toolName": "memoryRecall", "input": { "query": "verified tag repository test command", "limit": 5 } },
+          { "toolName": "readFile", "input": { "path": "src/tag.js" } },
+          { "toolName": "writeFile", "input": { "path": "src/tag.js", "content": "export function normalizeTag(value) {\n  return value.trim().toLowerCase();\n}\n" } },
+          { "toolName": "writeFile", "input": { "path": "test.mjs", "content": "import assert from 'node:assert/strict';\nimport { normalizeTag } from './src/tag.js';\nassert.equal(normalizeTag(' Actlume '), 'actlume');\nassert.equal(typeof normalizeTag(''), 'string');\n" } },
+          { "toolName": "shell", "input": { "command": "npm test", "cwd": "." } }
+        ],
+        "finalText": "Updated normalizeTag to trim and lowercase, then ran the remembered npm test command successfully."
+      }
+    ]
+  }
+}

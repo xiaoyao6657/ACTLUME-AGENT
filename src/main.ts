@@ -1,4 +1,5 @@
 import { config } from "dotenv";
+import { randomUUID } from "node:crypto";
 import { access, copyFile, mkdir, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
@@ -19,12 +20,14 @@ import {
   warning
 } from "./cli-experience.js";
 import { loadAppConfig, type AppConfig } from "./config.js";
+import { formatDoctorReport, runDoctor } from "./doctor.js";
 import { runAgent, type RunAgentResult } from "./agent.js";
 import { loadMcpToolManager, type McpToolManager } from "./mcp-client.js";
 import { listMemories } from "./memory.js";
 import { readPlanFile } from "./plan-mode.js";
 import { scanProjectWithCache } from "./project-scan.js";
 import { loadSecurityPolicy, normalizePermissionMode } from "./security.js";
+import { findLatestRuntimeSession, readRuntimeEvents } from "./runtime-events.js";
 import { discoverSkills, getSkillByName, resolveSkillPrompt } from "./skills.js";
 import {
   finishSession,
@@ -40,7 +43,8 @@ import type { AgentHistoryItem, PermissionMode, SecurityPolicy, ToolConfirmation
 import { tools as localTools } from "./tools/registry.js";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-config({ path: resolve(projectRoot, ".env"), override: true, quiet: true });
+// Keep explicit process/CI settings authoritative; .env fills in only missing values.
+config({ path: resolve(projectRoot, ".env"), quiet: true });
 
 type CliState = {
   workspace: string;
@@ -70,10 +74,61 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cliArgs.json && !cliArgs.task) {
+    console.error("--json requires a task prompt.");
+    process.exitCode = 2;
+    return;
+  }
+
+  if (cliArgs.probeProvider && !cliArgs.doctor) {
+    console.error("--probe-provider requires --doctor.");
+    process.exitCode = 2;
+    return;
+  }
+
   const appConfig = await loadAppConfig(cliArgs);
   const workspace = appConfig.workspace;
   const memoryDir = appConfig.memoryDir;
+  if (cliArgs.doctor) {
+    const { resolvePiCliPath } = await import("./pi-runtime.js");
+    const report = await runDoctor({
+      workspace,
+      memoryDir,
+      projectRoot,
+      piCliPath: resolvePiCliPath(),
+      model: appConfig.model,
+      baseURL: appConfig.baseURL,
+      apiKey: appConfig.apiKey ?? process.env.OPENAI_API_KEY,
+      mcpConfigPath: appConfig.mcpConfigPath,
+      probeProvider: cliArgs.probeProvider
+    });
+    console.log(formatDoctorReport(report));
+    process.exitCode = report.exitCode;
+    return;
+  }
   const securityPolicy = await loadSecurityPolicy(workspace);
+  if (!cliArgs.legacy) {
+    const { launchPiInteractive, resolvePiCliPath, runPiTask, runPiTaskDetailed } = await import("./pi-runtime.js");
+    const resumedSessionId = cliArgs.resume
+      ? await resolvePiSessionId(memoryDir, workspace, cliArgs.resume)
+      : undefined;
+    const sessionId = resumedSessionId ?? (cliArgs.task ? randomUUID() : undefined);
+    if (cliArgs.task && input.isTTY && output.isTTY) {
+      process.exitCode = await launchPiInteractive(appConfig, securityPolicy, { sessionId, prompt: cliArgs.task });
+    } else if (cliArgs.task) {
+      if (cliArgs.json) {
+        const result = await runPiTaskDetailed(appConfig, securityPolicy, cliArgs.task, sessionId ?? randomUUID(), { silent: true });
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+        process.exitCode = result.exitCode;
+      } else {
+        process.exitCode = await runPiTask(appConfig, securityPolicy, cliArgs.task, sessionId ?? randomUUID());
+      }
+    } else {
+      process.exitCode = await launchPiInteractive(appConfig, securityPolicy, { sessionId });
+    }
+    return;
+  }
+
   const mcpManager = await loadMcpToolManager({
     workspace,
     projectRoot,
@@ -117,6 +172,41 @@ async function main(): Promise<void> {
   }
 }
 
+async function resolvePiSessionId(
+  memoryDir: string,
+  workspace: string,
+  resume: string | true
+): Promise<string | undefined> {
+  if (resume === true) {
+    const latest = await findLatestRuntimeSession(memoryDir, workspace);
+    if (!latest) throw new Error("No Actlume Pi session is available to resume in this workspace.");
+    const latestEvents = await readRuntimeEvents(memoryDir, latest);
+    if (!await hasPiTranscriptFile(latestEvents, workspace)) {
+      throw new Error("The latest Actlume Pi session has no readable transcript file to resume.");
+    }
+    return latest;
+  }
+  const events = await readRuntimeEvents(memoryDir, resume);
+  if (!await hasPiTranscriptFile(events, workspace)) {
+    throw new Error(`Pi session not found in this workspace: ${resume}. Older Actlume JSON sessions can still be opened with --legacy --resume ${resume}.`);
+  }
+  return resume;
+}
+
+async function hasPiTranscriptFile(events: Awaited<ReturnType<typeof readRuntimeEvents>>, workspace: string): Promise<boolean> {
+  const sessionStart = events.find((event) =>
+    event.kind === "session_started" && event.workspace === workspace && Boolean(event.attributes?.sessionFile)
+  );
+  const sessionFile = sessionStart?.attributes?.sessionFile;
+  if (typeof sessionFile !== "string" || !sessionFile) return false;
+  try {
+    await access(sessionFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseCliArgs(argv: string[]): {
   task?: string;
   workspace?: string;
@@ -129,6 +219,10 @@ function parseCliArgs(argv: string[]): {
   resume?: string | true;
   permissionMode?: PermissionMode;
   streaming?: boolean;
+  legacy?: boolean;
+  json?: boolean;
+  doctor?: boolean;
+  probeProvider?: boolean;
 } {
   const taskParts: string[] = [];
   let workspace: string | undefined;
@@ -141,6 +235,10 @@ function parseCliArgs(argv: string[]): {
   let resume: string | true | undefined;
   let permissionMode: PermissionMode | undefined;
   let streaming: boolean | undefined;
+  let legacy = false;
+  let json = false;
+  let doctor = false;
+  let probeProvider = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -179,6 +277,26 @@ function parseCliArgs(argv: string[]): {
 
     if (arg === "--stream") {
       streaming = true;
+      continue;
+    }
+
+    if (arg === "--legacy") {
+      legacy = true;
+      continue;
+    }
+
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+
+    if (arg === "--doctor") {
+      doctor = true;
+      continue;
+    }
+
+    if (arg === "--probe-provider") {
+      probeProvider = true;
       continue;
     }
 
@@ -271,7 +389,11 @@ function parseCliArgs(argv: string[]): {
     mcpConfigPath,
     resume,
     permissionMode,
-    streaming
+    streaming,
+    legacy,
+    json,
+    doctor,
+    probeProvider
   };
 }
 
@@ -964,7 +1086,12 @@ function isYes(answer: string): boolean {
 
 function printHelp(): void {
   console.log(`Usage:
-  actlume "task"
+  actlume                         Open the Pi-powered interactive terminal
+  actlume --cwd D:\\workspace\\my-app
+  actlume --readonly              Start the Pi terminal with read-only tools
+  actlume --plan                   Start in read-only plan mode
+  actlume --legacy                 Open the previous Actlume readline interface
+  actlume "task"                 Start a task in the Pi TUI (RPC when non-interactive)
   actlume --cwd D:\\workspace\\my-app "task"
   actlume --readonly "inspect without modifying"
   actlume --max-steps 20 --model gpt-4.1-mini "task"
@@ -974,12 +1101,15 @@ function printHelp(): void {
   actlume --accept-edits "auto-approve file edits, still ask for execution"
   actlume --dont-ask "auto-deny actions that need confirmation"
   actlume --yolo "bypass confirmation prompts"
-  actlume --stream "use streaming LLM transport while preserving JSON protocol"
-  actlume --resume "continue from the latest saved session"
-  actlume --resume <session-id> "continue from a specific saved session"
+  actlume --stream "enable streaming on the legacy runtime"
+  actlume --resume "resume the latest Actlume Pi session"
+  actlume --resume <session-id> "resume a Pi session"
+  actlume --json "task"       Run headless and emit one structured JSON result to stdout
+  actlume --doctor            Check local runtime, storage, provider config, and MCP connections
+  actlume --doctor --probe-provider  Send one minimal request to the configured OpenAI-compatible endpoint
   ma
 
-Interactive commands:
+Legacy interactive commands (use actlume --legacy):
   /help          Show this help
   /cwd           Print current workspace
   /cwd <path>    Switch workspace

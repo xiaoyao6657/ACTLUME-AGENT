@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "holdout-stale-build-01",
+  "category": "memory-transfer",
+  "prompt": "Learning phase: read build.json, run its configured build command, run npm test to verify the current output, then save the verified build workflow with build.json provenance as candidate project memory named exactly 'Verified build workflow'. Before the fresh follow-up, build.json changes to v2. In the fresh session, read the current configuration, run its configured command, and run npm test. Do not rely on an old command when build.json has changed.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    "build.json": "{\"command\":\"node build-v1.mjs\",\"target\":\"dist/release.txt\",\"version\":\"release-v1\"}\n",
+    "build-v1.mjs": "import { readFile, writeFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('build.json', 'utf8'));\nawait writeFile(config.target, `${config.version}\\n`);\n",
+    "build-v2.mjs": "import { readFile, writeFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('build.json', 'utf8'));\nawait writeFile(config.target, `${config.version}\\n`);\n",
+    "dist/release.txt": "release-v1\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('build.json', 'utf8'));\nassert.equal((await readFile(config.target, 'utf8')).trim(), config.version);\n",
+    ".actlume/checks.json": "{\"schemaVersion\":1,\"checks\":[{\"id\":\"holdout-build-test\",\"command\":\"npm test\",\"cwd\":\".\",\"kind\":\"test\",\"required\":true,\"scopePaths\":[\"dist/release.txt\"],\"requiredFiles\":[\"build.json\",\"test.mjs\"],\"environmentFiles\":[\"build.json\",\"test.mjs\"],\"environmentKeys\":[]}]}\n"
+  },
+  "requiredFiles": ["build.json", "build-v1.mjs", "build-v2.mjs", "dist/release.txt", "test.mjs", ".actlume/checks.json"],
+  "oracleId": "holdout-stale-build-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Read build.json, execute its configured command, run npm test, then save the verified build workflow as candidate project memory named exactly 'Verified build workflow'. Include the build.json source reference and applicable path.",
+        "sessionKey": "learning",
+        "transitionAfter": {
+          "kind": "verify-and-promote-memory",
+          "memoryName": "Verified build workflow",
+          "command": "npm test",
+          "updateFiles": { "build.json": "{\"command\":\"node build-v2.mjs\",\"target\":\"dist/release.txt\",\"version\":\"release-v2\"}\n" }
+        }
+      },
+      {
+        "prompt": "Fresh-session follow-up: build.json changed. Read the current command and version, build release-v2 using the current configuration, then run npm test. Treat any recalled build command as stale unless the file confirms it.",
+        "sessionKey": "follow-up"
+      }
+    ]
+  }
+}

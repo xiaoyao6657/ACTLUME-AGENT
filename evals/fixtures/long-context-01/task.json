@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "long-context-01",
+  "category": "long-context",
+  "prompt": "Find the cache default in src/config.js and enable it. Keep cacheTtlMs=0 meaning no expiry. The repository includes large unrelated data and decoy strings; make the smallest compatible change.",
+  "files": {
+    "package.json": "{\"type\":\"module\"}\n",
+    "src/config.js": "export const defaults = { cacheEnabled: false, cacheTtlMs: 0 };\nexport function isCacheFresh(ageMs, ttlMs = defaults.cacheTtlMs) {\n  return ttlMs === 0 || ageMs < ttlMs;\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { defaults, isCacheFresh } from './src/config.js';\nassert.equal(defaults.cacheEnabled, true);\nassert.equal(isCacheFresh(999999, 0), true);\nassert.equal(isCacheFresh(10, 20), true);\nassert.equal(isCacheFresh(20, 20), false);\n"
+  },
+  "largeFiles": [
+    { "path": "data/large-unrelated.log", "pattern": "Decoy: cacheEnabled=false appears in historical examples and must not be edited.\\n", "repetitions": 12000 }
+  ],
+  "requiredFiles": ["src/config.js"],
+  "oracleId": "long-context-01-hidden-v1",
+  "protocol": {
+    "actions": [
+      { "toolName": "editPlan", "input": { "summary": "Enable the cache default while preserving zero-TTL behavior", "expectedFiles": ["src/config.js"], "steps": ["Inspect the target file", "Edit only the cache default"] } },
+      { "toolName": "readFile", "input": { "path": "src/config.js" } },
+      { "toolName": "writeFile", "input": { "path": "src/config.js", "content": "export const defaults = { cacheEnabled: true, cacheTtlMs: 0 };\nexport function isCacheFresh(ageMs, ttlMs = defaults.cacheTtlMs) {\n  return ttlMs === 0 || ageMs < ttlMs;\n}\n" } }
+    ],
+    "finalText": "Fixed the cache default, preserved zero-TTL behavior, and kept the patch within src/config.js."
+  }
+}

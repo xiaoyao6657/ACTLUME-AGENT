@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = join(packageRoot, "src", "main.ts");
-const tsxCli = join(packageRoot, "node_modules", "tsx", "dist", "cli.mjs");
+// Resolve production dependencies through Node's package resolution so this
+// entry works when npm hoists them into the consumer's node_modules directory.
+const tsxCli = fileURLToPath(import.meta.resolve("tsx/cli"));
 
 const child = spawn(process.execPath, [tsxCli, entry, ...process.argv.slice(2)], {
   cwd: process.cwd(),

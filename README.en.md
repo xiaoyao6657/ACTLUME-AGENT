@@ -1,43 +1,36 @@
 # actlume
 
-`actlume` is a local ReAct Agent CLI written in TypeScript. It is built to make the `Reason -> Act -> Observe -> Final` loop easy to inspect, run, and extend toward a usable coding-assistant prototype.
-
-It is currently useful for project inspection, file search, small code edits, check commands, task tracking, and external tools through MCP.
+`actlume` is a local Coding Agent written in TypeScript. Pi provides the model loop, session transcript, and terminal TUI. Actlume owns project context, tool permissions, memory lifecycle, workflow state, and verification evidence.
 
 ## Capabilities
 
-- OpenAI-compatible Chat Completions: works with OpenAI, DeepSeek, and compatible services.
-- Local tools: project scan, edit planning, tree, text search, file IO, patching, controlled shell, recall, and task tracking.
-- Interactive CLI: supports one-shot tasks and ongoing sessions.
-- CLI experience: command history, multiline input, colored output, diff highlighting, and helper commands.
-- Safety controls: write, patch, shell, and non-read-only MCP calls require confirmation by default; `--readonly`, `--yes`, and `.agent-security.json` are available.
-- Configuration system: CLI args, project config, user config, environment variables, and defaults are merged by precedence.
-- MCP extension: external search, browser, database, GitHub, and similar tools can be connected through `.agent-mcp.json`.
-- Logs and memory: tool calls, task state, and run logs are written to `.agent-memory`.
-- Code editing workflow: `editPlan` is required before file edits, changes are summarized afterwards, and suggested checks can run automatically.
-- Model adapters and diagnostics: detects OpenAI, DeepSeek, Ollama, and generic OpenAI-compatible services, with clearer authentication, gateway, rate-limit, and protocol errors.
-- Tests and release: includes unit tests, CLI integration tests, MCP mock server tests, GitHub Actions, CI scripts, and an npm dry-run release script.
-- Benchmark: a fixed suite validates core tools and control flow.
+- With no arguments, opens Pi TUI. A positional task starts as the first prompt in the TUI when a terminal is available; scripts and piped use run through Pi RPC.
+- Registers Actlume's existing local tools through Pi's tool API, preserving input validation, structured errors, and configured MCP servers.
+- Loads `ACTLUME.md` / `CLAUDE.md` and `.actlume/rules/*.md`. Memories include type, scope, source, lifecycle status, and optional file fingerprints.
+- New memories are candidates. Legacy memories without lifecycle metadata become `needs_review`. Use `/actlume-memory promote <filename>` in the TUI to confirm promotion.
+- Permission hooks enforce read-only mode, tool allow/deny rules, shell risk checks, and sensitive-path approval. Actions that need a human but have no interactive UI are denied.
+- Pi runs keep workflow plans and tool history scoped per run and apply exploration and repeated-failure guardrails. If files changed without a current passing verification, the agent is asked to verify or report the result as unverified.
+- Structured events correlate session, run, agent, and tool-call IDs. Only commands matching a `CheckSpec` in `.actlume/checks.json` create verification evidence bound to workspace, environment, and task identity. A passing check establishes success for that scope and fingerprint; it does not independently prove task requirements.
+- `/actlume-memory`, `/actlume-context`, `/actlume-changes`, `/actlume-verify`, `/actlume-result`, and `/actlume-doctor` expose memory, context, changes, verification, and run outcome. `/actlume-legacy` browses old JSON sessions; `/actlume-import <id>` explicitly imports one as attributed historical text.
+- The experimental `scopedResearch` tool runs up to three parallel read-only subtasks in separate Pi sessions, with an allowlisted tool set, step/timeout budgets, and parent cancellation. This limits callable tools; it is not an OS or per-path filesystem sandbox. Local events can optionally be exported as OTLP/HTTP spans with failure diagnostics.
 
-## Requirements
+## Requirements and install
 
-- Node.js >= 22
+- Node.js `>=22.19.0`
 - npm
 - OpenAI or OpenAI-compatible API key
-
-## Install
 
 ```bash
 npm install
 ```
 
-Copy the env example:
+Copy `.env.example` to `.env`:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Edit `.env`:
+Example configuration:
 
 ```env
 OPENAI_API_KEY=your_api_key_here
@@ -45,258 +38,85 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4.1-mini
 AGENT_MAX_STEPS=10
 AGENT_MEMORY_DIR=.agent-memory
-AGENT_READONLY=false
-AGENT_MCP_CONFIG=
+# Optional OTLP/HTTP trace export. Add collector authentication with
+# ACTLUME_OTEL_EXPORTER_OTLP_HEADERS when needed; never commit credentials.
+ACTLUME_OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example/otel
+ACTLUME_OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20your-token
 ```
 
-DeepSeek example:
-
-```env
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_MODEL=deepseek-v4-pro
-```
-
-## Configuration
-
-Config precedence from highest to lowest:
-
-1. CLI arguments
-2. Project-level `.actlume/config.json`
-3. User-level `~/.actlume/config.json`
-4. Environment variables / `.env`
-5. Defaults
-
-Start from the example file:
-
-```powershell
-Copy-Item .actlume/config.example.json .actlume/config.json
-```
-
-Supported fields:
-
-```json
-{
-  "workspace": ".",
-  "memoryDir": ".agent-memory",
-  "readonly": false,
-  "maxSteps": 10,
-  "model": "gpt-4.1-mini",
-  "baseURL": "https://api.openai.com/v1",
-  "mcpConfigPath": ".agent-mcp.json",
-  "yes": false
-}
-```
-
-`apiKey` can also be placed in config files, but `.env` or system environment variables are preferred.
-
-## Usage
-
-Run inside this project:
+Run:
 
 ```bash
-npm start -- "Inspect the current project structure and summarize it"
 npm start
-npm run typecheck
-npm run test
-npm run benchmark
+npm start -- --cwd D:\workspace\my-app
 ```
 
-Register global commands:
+Register a global command with `npm link`:
 
 ```bash
-npm link
-```
-
-Then use from any directory:
-
-```powershell
-actlume
-ma
-actlume "Inspect the current project structure and summarize it"
-actlume --cwd D:\workspace\my-app "Analyze this project"
-actlume --readonly "Inspect without modifying files"
+actlume "Analyze the main risks in this project"
+actlume --plan
+actlume --readonly
 actlume --yes "Fix a small issue and run checks"
 ```
 
-Common interactive commands:
+Run `actlume --doctor` to check Node/Pi CLI, shell startup, data-directory read/write, provider configuration, and MCP connection status. It does not call a model API. Only `actlume --doctor --probe-provider` sends one minimal request to the configured OpenAI-compatible endpoint, capped at one output token.
 
-```text
-/help          Show help
-/cwd           Print current workspace
-/cwd <path>    Switch workspace
-/status        Show model, workspace, readonly mode, and memory dir
-/tools         List available tools
-/mcp           Show MCP status
-/mcp tools     Show MCP tools and schemas
-/mcp reload    Reload MCP servers
-/memory        Show memory stats
-/init          Initialize config files in the current workspace
-/doctor        Check local environment and configuration
-/compact       Refresh project summary and index cache
-/clear         Clear the terminal
-/model <name>  Switch model
-/readonly on   Enable readonly mode
-/readonly off  Disable readonly mode
-/yes on        Enable auto-confirm
-/yes off       Disable auto-confirm
-/exit          Quit
+Tasks launched in a terminal use Pi TUI. In a non-interactive process, approval-required actions are blocked; `--yes` explicitly selects bypass permissions.
+
+## Sessions and compatibility
+
+Pi transcripts are stored under `.agent-memory/pi-sessions`; structured events and verification records go under `.agent-memory/events` and `.agent-memory/verification`. `--resume` accepts Pi sessions recorded by Actlume:
+
+```bash
+actlume --resume
+actlume --resume <pi-session-id> "Continue this task"
 ```
 
-Use a trailing backslash for multiline input:
+Old Actlume JSON transcripts are not converted into fake Pi messages. They remain resumable with the legacy UI:
 
-```text
-Analyze this issue,\
-then suggest a fix
+```bash
+actlume --legacy --resume <old-session-id>
 ```
 
-Interactive command history is saved to `~/.actlume/history`.
+The old ReAct runtime, snapshots, and workflow guardrails are retained only on the `--legacy` path.
 
-## MCP
-
-MCP is the recommended way to add external capabilities. Config lookup order:
-
-1. `--mcp-config <path>`
-2. `AGENT_MCP_CONFIG`
-3. `.agent-mcp.json` in the current workspace
-4. `.agent-mcp.json` in the actlume project directory
-
-Example:
-
-```powershell
-Copy-Item .agent-mcp.example.json .agent-mcp.json
-```
-
-Config shape:
-
-```json
-{
-  "servers": {
-    "search": {
-      "command": "npx",
-      "args": ["-y", "some-search-mcp-server"],
-      "env": {
-        "SEARCH_API_KEY": "your_key_here"
-      },
-      "cwd": ".",
-      "toolPrefix": "mcp_search",
-      "startupTimeoutMs": 15000,
-      "toolTimeoutMs": 60000
-    }
-  }
-}
-```
-
-`/mcp` shows server status, disabled/failed reasons, and tool counts. `/mcp tools` shows MCP tool names, side-effect type, and input schemas.
-
-Note: actlume does not include built-in web search. Realtime information, news, scores, and web pages should come from MCP web search, browser, or fetch tools. The agent detects these tasks; if no search-like MCP tool is available, it asks you to configure network search instead of guessing.
-
-## Security Policy
-
-By default, file writes and patches are restricted to the current workspace, and dangerous shell commands are blocked. Start from the example file:
-
-```powershell
-Copy-Item .agent-security.example.json .agent-security.json
-```
-
-Supported policy fields:
-
-- `allowedTools` / `deniedTools`: tool allowlist / denylist with exact names or `*` wildcards.
-- `shellAllowlist` / `shellDenylist`: shell command regex allowlist / denylist.
-- `allowHighRiskShell`: whether to allow high-risk commands such as `git reset --hard` or `npm publish`.
-
-Environment overrides are also supported: `AGENT_ALLOWED_TOOLS`, `AGENT_DENIED_TOOLS`, `AGENT_SHELL_ALLOWLIST`, `AGENT_SHELL_DENYLIST`, and `AGENT_ALLOW_HIGH_RISK_SHELL`.
-
-## Main Tools
-
-- `projectScan`: generate a lightweight project index, language distribution, key files, scripts, and suggested checks, cached in `.agent-memory/project-index.json`.
-- `editPlan`: record the planned change, expected files, and steps before editing files.
-- `listDir` / `tree`: inspect directories.
-- `searchText`: search text with a JavaScript regular expression.
-- `readFile` / `writeFile` / `appendFile` / `fileExists`: file operations.
-- `applyPatch`: apply a unified diff.
-- `shell`: run a controlled shell command.
-- `recall`: search historical actions.
-- `taskList` / `taskAdd` / `taskUpdate`: track tasks.
-
-## Project Layout
-
-```text
-actlume/
-|-- bin/                 Global CLI entry
-|-- src/
-|   |-- main.ts          CLI entry and interactive mode
-|   |-- agent.ts         ReAct loop
-|   |-- llm.ts           LLM wrapper
-|   |-- model-adapter.ts Model adapters and diagnostics
-|   |-- project-scan.ts  Project scanning
-|   |-- mcp-client.ts    MCP bridge
-|   |-- tools/           Local tools
-|   |-- test-fixtures/   Test fixtures
-|   `-- benchmark.ts     Benchmark runner
-|-- .github/workflows/   CI workflow
-|-- CHANGELOG.md
-|-- README.md
-|-- README.en.md
-|-- .actlume/config.example.json
-|-- package.json
-`-- tsconfig.json
-```
-
-## Build TODO
-
-The goal is to move `actlume` from a learning MVP toward a usable prototype.
-
-- [x] Project scanning and context indexing
-  - [x] Add the `projectScan` tool.
-  - [x] Detect project kinds, language distribution, key files, package scripts, and suggested checks.
-  - [x] Inject a lightweight project snapshot into the Agent prompt.
-  - [x] Persist project summaries to `.agent-memory/project-summary.md`.
-  - [x] Add fingerprint validation, incremental reuse, and caching for large repositories.
-- [x] Code editing workflow
-  - [x] Produce an edit plan and expected file list before changes.
-  - [x] Summarize diffs after changes.
-  - [x] Detect and run suitable checks automatically.
-  - [x] Support limited automatic repair after check failures.
-- [x] Permissions and safety
-  - [x] Add command risk detection.
-  - [x] Restrict writes to the current workspace by default.
-  - [x] Support tool permission config and command allowlists / denylists.
-- [x] Configuration system
-  - [x] Support project-level `.actlume/config.json`.
-  - [x] Support user-level `~/.actlume/config.json`.
-  - [x] Define precedence for CLI args, project config, user config, environment variables, and defaults.
-- [x] MCP and networked capabilities
-  - [x] Improve MCP status, tool display, timeouts, and diagnostics.
-  - [x] Provide an example web search MCP config.
-  - [x] Require search tools for realtime-information questions.
-- [x] Interactive CLI experience
-  - [x] Command history and multiline input.
-  - [x] Colored output, Markdown rendering, and diff highlighting.
-  - [x] `/init`, `/doctor`, `/compact`, and `/clear` helper commands.
-- [x] Model adapters and diagnostics
-  - [x] Standardize diagnostics for OpenAI-compatible services.
-  - [x] Add model capability metadata and JSON repair retries.
-- [x] Tests, CI, and release
-  - [x] Add unit tests and CLI integration tests.
-  - [x] Add MCP mock server tests.
-  - [x] Configure GitHub Actions.
-  - [x] Prepare npm release scripts and changelog.
-
-## Development Checks
+## Development checks
 
 ```bash
 npm run typecheck
-npm run test
+npm test
 npm run benchmark
 npm run ci
-npm run release:dry
+npm run smoke:package
 ```
 
-The current benchmark covers file reading, search, project scan, edit planning, CLI experience helpers, readonly protection, patching, shell, security policy, config precedence, MCP status, realtime-information guard, task tracking, and invalid tool input. `npm test` covers model diagnostics, JSON repair, CLI integration, and the MCP mock server.
+`npm run ci` runs typechecking, tests, and deterministic benchmarks. `npm run smoke:package` installs the npm tarball into a unique temporary consumer and checks the production entry, a headless mock task, resume, Pi tool registration, and an independent oracle; the report goes under ignored `.agent-benchmark/package-smoke`. The benchmark creates a unique temporary Git workspace and deletes only the path created for that run; it leaves any repository `.agent-benchmark` directory untouched. Tests, package smoke, and Eval protocol cards use local deterministic providers and do not call a real model. All nine core cards pass the protocol/oracle checks on Windows and Ubuntu 24.04 WSL2 with native Linux Node; these validate runtime/failure/recording contracts only. Real-model campaigns ran on source candidate `eb941e32`; the current verified source commit `fa4ba7d` differs from that experiment candidate by four production inputs, and no real-model campaign has been rerun on the current source. The 24 development attempts and eight post-freeze confirmation attempts have complete usage accounting, but oracle outcomes were mixed, provider revision/sampling are unknown, and the confirmation reused earlier task cards; there is no strategy-benefit or unseen-task generalization claim. Two earlier candidate campaigns stopped when usage was unknown. See [`evals/README.md`](evals/README.md), the [experiment report](docs/ACTLUME-ROUND-2-EXPERIMENT-REPORT.md), and the [architecture diagram](docs/ACTLUME-ARCHITECTURE.md).
 
-## Safety Notes
+## Main modules
 
-- Prefer using it first inside a Git repo or test workspace.
-- Without `--yes`, write and execute tools request confirmation.
-- `--readonly` blocks write and execute tools.
-- `.env`, `.agent-mcp.json`, `.agent-security.json`, `.actlume/config.json`, and `.agent-memory/` should not be committed.
+```text
+src/main.ts              CLI routing for Pi and the compatibility runtime
+src/pi-runtime.ts        Pi CLI/RPC, tool adaptation, approval, and policies
+src/pi-extension.ts      Extension entry point loaded by Pi
+src/pi-workflow.ts       Run-local workflow state and exploration/failure guardrails
+src/runtime-events.ts    Structured session/run/agent/toolCall events
+src/otel-exporter.ts     Optional OTLP/HTTP trace mapping and export
+src/verification.ts      Git baseline, check records, and outcome assessment
+src/context-budget.ts    Budget for injected project instructions and memories
+src/memory.ts            Versioned memory metadata, lifecycle, and applicability
+src/security.ts          Permission modes, shell risk, and sensitive paths
+src/agent.ts             Legacy ReAct runtime (--legacy only)
+src/workflow-guard.ts    Legacy runtime workflow guardrails
+src/tools/               Actlume local tools
+```
+
+## Current limits
+
+- MCP configuration is bridged to Pi with extension auto-discovery disabled. Actlume and Pi's MCP extension are loaded explicitly. On the Pi path, MCP `startupTimeoutMs` and custom `toolPrefix` are not applied; `/actlume-doctor` reports those migration notes. The legacy runtime still honors its old fields.
+- Memory retrieval is keyword, CJK bigram/trigram, and substring based. Conflicts are retained for review instead of being automatically resolved.
+- `AGENT_MAX_STEPS` limits Pi model turns. A settled runtime means the run stopped; task outcome still depends on code changes and matching verification evidence.
+- `scopedResearch` is currently limited to three parallel read-only tasks; it does not provide parallel write worktrees or OS/per-path isolation, and the parent must review its findings.
+- The OTLP exporter is a small OTLP/HTTP span serializer, not automatic instrumentation through the OpenTelemetry SDK. HTTP/network/timeout losses are counted and shown in the TUI/doctor; local JSONL remains the source record. A hosted collector or Langfuse deployment has not been tested.
+- MCP `startupTimeoutMs` and `toolPrefix` have no exact Pi equivalents. Exactly-once recovery for MCP or other remote side effects and independent requirement verification are not implemented.
+- Real-model development (24 attempts) and post-freeze confirmation (8 attempts) completed with full usage reporting on source candidate `eb941e32`; the latest source candidate differs only in the README files. Results are descriptive only: provider revision/sampling are unknown, the confirmation cards were exercised earlier, and neither experiment establishes a resolve rate, memory benefit, ablation gain, or cost claim. Protocol cards validate runtime contracts and the summary harness computes supplied results; neither demonstrates model gains. Process-tree cancellation has been exercised on Windows and Ubuntu 24.04 under WSL2 with native Linux Node; a CLI/PTTY interruption-recovery transcript is saved. Hosted GitHub CI, the manual TUI matrix, and an interactive TUI screen recording remain pending.

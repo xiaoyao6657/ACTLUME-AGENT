@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "r7-provider-tools-usage-smoke-v2",
+  "createdAt": "2026-10-06",
+  "dataClass": "real-model-smoke-only",
+  "retrospectiveRecord": true,
+  "qualityClaim": false,
+  "task": {
+    "id": "short-regression-01",
+    "fixture": "evals/fixtures/short-regression-01/task.json",
+    "fixtureHash": "sha256:825227494829df94590ea87ffe65dd4838ce4347b995beca6d9b32d149800ba0",
+    "oracle": "evals/oracles/short-regression-01.mjs",
+    "oracleId": "short-regression-01-hidden-v1",
+    "oracleHash": "sha256:49a06067ecc1fd295475288511c0740a878a948ef552b103f27b97b678650763",
+    "runtimeCheckOverlayHash": "sha256:ed4ba3fbcbadfab0aa416644670f3f7eebadd550c0c494fa930b0c9cb0a00666"
+  },
+  "candidate": {
+    "head": "256e476ef5bdd624526c1ea306c755fd4ad354e7",
+    "worktreeSnapshotHash": "sha256:fb0c5652a86f2c1c814b973e8defa0574efb7fcd56a7fd0ba1ac84afa87ee2a9"
+  },
+  "provider": {
+    "id": "https://api.deepseek.com",
+    "modelId": "deepseek-v4-pro",
+    "modelRevision": "unknown",
+    "sampling": { "temperature": null, "topP": null, "seed": "unknown" }
+  },
+  "condition": {
+    "id": "actlume-full",
+    "classification": "retrospective-effective-treatment",
+    "previousRecordLabel": "actlume-guardrails-enforced",
+    "memoryTreatment": "enabled-by-runtime-default-before-explicit-Eval-toggle",
+    "policyRules": {
+      "actlume.workflow.efficiency": "enforce",
+      "actlume.task.scope-precheck": "enforce"
+    },
+    "permissionMode": "acceptEdits",
+    "mcp": "isolated-empty-config"
+  },
+  "executionOrder": [
+    { "taskId": "short-regression-01", "condition": "actlume-full", "repeatIndex": 0 }
+  ],
+  "limits": {
+    "maxAttempts": 1,
+    "maxUpstreamRequests": 8,
+    "maxOutputTokensPerRequest": 512,
+    "maxReportedTokens": 35000,
+    "maxDurationMs": 120000,
+    "tokenLimitBehavior": "Blocks subsequent provider calls after reported usage reaches the threshold; the in-flight response crossed it by 4704 tokens."
+  },
+  "run": {
+    "report": ".agent-benchmark/real-model-smoke/short-regression-01-bd7ae87a-9e03-410e-afe1-99defb259bba/report.json",
+    "runtimeEvents": ".agent-benchmark/real-model-smoke/short-regression-01-bd7ae87a-9e03-410e-afe1-99defb259bba/memory/events/fe6cb59b-9e3e-4490-8c44-8836fc2055c5.jsonl",
+    "patch": ".agent-benchmark/real-model-smoke/short-regression-01-bd7ae87a-9e03-410e-afe1-99defb259bba/patch.diff",
+    "providerRequests": 7,
+    "usageKnownRequests": 7,
+    "inputTokens": 38344,
+    "outputTokens": 1360,
+    "totalTokens": 39704,
+    "toolCallsRequested": 9,
+    "toolCallsExecuted": 7,
+    "toolCallsBlocked": 2,
+    "runtimeStatus": "failed",
+    "runtimeEvidence": "unchecked",
+    "runtimeReason": "One or more required checks have not run for this attempt.",
+    "runtimeExitCode": 3,
+    "completionClaimStatus": "unknown",
+    "oracleVerdict": "pass",
+    "oracleChecks": 5
+  },
+  "limitations": [
+    "This is one smoke attempt and uses a different candidate/overlay/budget from smoke-v1; do not compare or combine it with smoke-v1 as a paired sample.",
+    "Memory recall/context and memory tools were enabled by runtime default; the old condition label omitted this factor, so retrospectively classify the effective treatment as actlume-full.",
+    "The independent oracle accepted the one-line parser patch, but the runtime did not complete: the headless shell tool required approval to run the visible CheckSpec, leaving runtime evidence unchecked.",
+    "Provider model revision and sampling settings are unknown, and there is no price estimate.",
+    "The smoke overlay validates only the short-regression task; no core task matrix or holdout has run."
+  ]
+}

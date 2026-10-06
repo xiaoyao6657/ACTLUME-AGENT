@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "holdout-memory-transfer-01",
+  "category": "memory-transfer",
+  "prompt": "First discover the exact repository test command and the source files it covers, then save that verified fact as candidate project memory with source references. In a fresh session, implement normalizeCacheKey in src/cache.js so it trims whitespace and lowercases the key, update the regression test, and run the remembered command.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    "src/cache.js": "export function normalizeCacheKey(value) {\n  return value.trim();\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { normalizeCacheKey } from './src/cache.js';\nassert.equal(normalizeCacheKey('  User:42 '), 'User:42');\nassert.equal(normalizeCacheKey('PI'), 'PI');\n"
+  },
+  "requiredFiles": ["src/cache.js", "test.mjs"],
+  "oracleId": "holdout-memory-transfer-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Run the exact fixture test command and identify the files it covers. Save the verified command and its source references as candidate project memory named exactly 'Verified cache test command'.",
+        "sessionKey": "learning",
+        "transitionAfter": { "kind": "verify-and-promote-memory", "memoryName": "Verified cache test command", "command": "npm test" }
+      },
+      {
+        "prompt": "In this fresh session, recall the verified repository test command and implement normalizeCacheKey in src/cache.js so it trims surrounding whitespace and lowercases the key. Update its regression test and run the remembered command.",
+        "sessionKey": "follow-up"
+      }
+    ]
+  }
+}

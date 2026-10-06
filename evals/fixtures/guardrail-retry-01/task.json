@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "guardrail-retry-01",
+  "category": "short-task",
+  "prompt": "Fix the failing regression in src/slug.js. The repository is small; avoid repeating broad reads when the first attempts reveal no new evidence. After a guardrail intervention, change strategy, make the focused fix, and verify it.",
+  "files": {
+    "package.json": "{\"type\":\"module\"}\n",
+    "src/slug.js": "export function slugify(value) {\n  return value.toLowerCase().replaceAll(' ', '_');\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { slugify } from './src/slug.js';\nassert.equal(slugify('hello world'), 'hello-world');\n"
+  },
+  "requiredFiles": ["src/slug.js", "test.mjs"],
+  "oracleId": "guardrail-retry-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "actions": [
+      { "toolName": "editPlan", "input": { "summary": "Fix spaces in slugify output", "expectedFiles": ["src/slug.js"], "steps": ["Inspect the tiny fixture", "Fix the separator", "Run the regression"] } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "tree", "input": { "path": ".", "depth": 2 } },
+      { "toolName": "writeFile", "input": { "path": "src/slug.js", "content": "export function slugify(value) {\n  return value.toLowerCase().replaceAll(' ', '-');\n}\n" } },
+      { "toolName": "shell", "input": { "command": "node test.mjs", "cwd": "." } }
+    ],
+    "finalText": "Fixed the regression and verified it with node test.mjs."
+  }
+}

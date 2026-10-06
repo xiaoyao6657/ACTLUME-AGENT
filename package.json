@@ -1,7 +1,7 @@
 {
   "name": "actlume",
   "version": "0.1.0",
-  "description": "A lightweight local ReAct agent CLI for coding workflows.",
+  "description": "A local coding agent built on Pi with Actlume project memory, permissions, and verification evidence.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -11,7 +11,16 @@
   "files": [
     "bin",
     "src",
+    "scripts",
+    "evals",
+    "!evals/tasks/holdout-v1.md",
+    "!evals/tasks/holdout-v2.md",
+    "!evals/tasks/holdout-v3.md",
+    "!evals/fixtures/holdout-*/**",
+    "!evals/oracles/holdout-*.mjs",
     ".actlume/config.example.json",
+    ".actlume/policies.example.json",
+    ".actlume/checks.example.json",
     ".agent-mcp.example.json",
     ".agent-security.example.json",
     "README.md",
@@ -22,26 +31,35 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
-    "test": "tsx --test src/model-adapter.test.ts src/external-info.test.ts src/cli-experience.test.ts src/agent-output.test.ts src/mcp-client.test.ts src/cli-integration.test.ts src/session.test.ts src/security.test.ts src/prompt.test.ts src/plan-mode.test.ts src/skills.test.ts src/subagent.test.ts src/memory.test.ts src/context-artifacts.test.ts src/llm-stream.test.ts src/tool-batcher.test.ts",
+    "test": "tsx --test src/model-adapter.test.ts src/external-info.test.ts src/cli-experience.test.ts src/agent-output.test.ts src/mcp-client.test.ts src/cli-integration.test.ts src/session.test.ts src/security.test.ts src/prompt.test.ts src/plan-mode.test.ts src/skills.test.ts src/subagent.test.ts src/memory.test.ts src/context-artifacts.test.ts src/llm-stream.test.ts src/tool-batcher.test.ts src/pi-runtime.test.ts src/runtime-events.test.ts src/verification.test.ts src/benchmark-workspace.test.ts src/eval-harness.test.ts src/eval-provider-proxy.test.ts src/eval-smoke-overlay.test.ts src/eval-conditions.test.ts src/eval-campaign.test.ts src/eval-environment.test.ts src/pi-workflow.test.ts src/task-state.test.ts src/task-tracker.test.ts src/process-supervisor.test.ts src/replay-run.test.ts src/completion-claim.test.ts src/tools/artifact.test.ts src/otel-exporter.test.ts src/legacy-session-import.test.ts src/context-budget.test.ts src/policy-config.test.ts src/doctor.test.ts",
     "typecheck": "tsc --noEmit",
     "replay": "tsx scripts/replay-run.ts",
+    "eval:summary": "tsx scripts/eval-summary.ts",
+    "eval:model-smoke": "tsx scripts/eval-model-smoke.ts",
+    "eval:protocol-smoke": "tsx scripts/eval-protocol-smoke.ts",
+    "eval:fixture-preflight": "tsx scripts/eval-fixture-preflight.ts",
+    "smoke:package": "tsx scripts/package-smoke.ts",
     "benchmark": "tsx src/benchmark.ts",
     "ci": "npm run typecheck && npm run test && npm run benchmark",
+    "baseline:worktree": "node scripts/worktree-manifest.mjs",
     "release:dry": "npm pack --dry-run",
-    "prepack": "npm run ci"
+    "prepack": "npm run ci",
+    "eval:model-campaign": "tsx scripts/eval-model-campaign.ts"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "dotenv": "latest",
-    "openai": "latest",
-    "zod": "latest"
+    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "dotenv": "17.4.2",
+    "openai": "7.19.0",
+    "zod": "4.4.3",
+    "tsx": "4.22.4",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "tsx": "latest",
-    "typescript": "latest"
+    "@types/node": "26.0.1",
+    "typescript": "6.0.3"
   }
 }

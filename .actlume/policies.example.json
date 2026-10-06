@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "rules": {
+    "actlume.workflow.efficiency": { "version": "1.0.0", "mode": "enforce" },
+    "actlume.task.scope-precheck": { "version": "1.0.0", "mode": "enforce" }
+  }
+}

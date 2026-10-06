@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added branch-aware task state, verification evidence, scoped memory lifecycle, paired Eval controls, and a deterministic local protocol runner for Pi.
+- Added an explicit doctor command, bounded provider probe, npm package installation smoke, and disabled ambient Pi extension discovery by default.
+- Pinned direct dependencies to the versions recorded in the lockfile. Real-model quality, remote cross-platform CI, and interactive TUI rendering remain separate acceptance gates.
+
 ## 0.1.0
 
 - Initial local ReAct agent CLI.

@@ -28,11 +28,11 @@ export const enterPlanModeTool: ToolDefinition = {
   async run(_input, ctx) {
     return toolSuccess(
       [
-        `Plan file: ${getPlanFilePath(ctx.memoryDir, ctx.runId)}`,
+        `Plan file: ${getPlanFilePath(ctx.memoryDir, ctx.runId, ctx)}`,
         "Inspect with read-only tools, then call writePlan with steps.",
         "When ready for review, call exitPlanMode."
       ].join("\n"),
-      { planPath: getPlanFilePath(ctx.memoryDir, ctx.runId), permissionMode: ctx.permissionMode }
+      { planPath: getPlanFilePath(ctx.memoryDir, ctx.runId, ctx), permissionMode: ctx.permissionMode }
     );
   }
 };
@@ -65,7 +65,7 @@ export const writePlanTool: ToolDefinition = {
   async run(input, ctx) {
     const args = writePlanSchema.parse(input);
     const markdown = buildPlanMarkdown(args.title, args.content, args.steps);
-    const path = await writePlanFile(ctx.memoryDir, ctx.runId, markdown);
+    const path = await writePlanFile(ctx.memoryDir, ctx.runId, markdown, ctx);
     const stepCount = args.steps.length;
     return toolSuccess(
       stepCount > 0
@@ -95,14 +95,14 @@ export const updatePlanTool: ToolDefinition = {
 
     let plan;
     try {
-      plan = await readPlanFile(ctx.memoryDir, ctx.runId);
+      plan = await readPlanFile(ctx.memoryDir, ctx.runId, ctx);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return toolFailure({
           content: "No plan exists yet. Call writePlan first.",
           errorCode: "PLAN_NOT_FOUND",
           retryable: true,
-          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId) }
+          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId, ctx) }
         });
       }
       throw error;
@@ -118,7 +118,7 @@ export const updatePlanTool: ToolDefinition = {
       });
     }
 
-    const path = await writePlanFile(ctx.memoryDir, ctx.runId, updated.content);
+    const path = await writePlanFile(ctx.memoryDir, ctx.runId, updated.content, ctx);
     const statusIcon = args.status === "done" ? "✅" : args.status === "skipped" ? "⏭️" : "⬜";
     return toolSuccess(`${statusIcon} Step ${args.stepIndex} → ${args.status}. ${args.note}`.trim(), {
       path,
@@ -135,7 +135,7 @@ export const readPlanTool: ToolDefinition = {
   parameters: { type: "object", properties: {} },
   async run(_input, ctx) {
     try {
-      const plan = await readPlanFile(ctx.memoryDir, ctx.runId);
+      const plan = await readPlanFile(ctx.memoryDir, ctx.runId, ctx);
       const progress = summarizePlanProgress(plan.content);
       return toolSuccess(
         progress ? `${progress}\n\n${plan.content}` : plan.content,
@@ -147,7 +147,7 @@ export const readPlanTool: ToolDefinition = {
           content: "No plan has been written yet. Call writePlan first.",
           errorCode: "PLAN_NOT_FOUND",
           retryable: true,
-          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId) }
+          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId, ctx) }
         });
       }
       throw error;
@@ -162,7 +162,7 @@ export const exitPlanModeTool: ToolDefinition = {
   parameters: { type: "object", properties: {} },
   async run(_input, ctx) {
     try {
-      const plan = await readPlanFile(ctx.memoryDir, ctx.runId);
+      const plan = await readPlanFile(ctx.memoryDir, ctx.runId, ctx);
       const progress = summarizePlanProgress(plan.content);
       return toolSuccess(
         [
@@ -187,7 +187,7 @@ export const exitPlanModeTool: ToolDefinition = {
           content: "No plan written yet. Call writePlan first.",
           errorCode: "PLAN_NOT_FOUND",
           retryable: true,
-          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId) }
+          metadata: { path: getPlanFilePath(ctx.memoryDir, ctx.runId, ctx) }
         });
       }
       throw error;

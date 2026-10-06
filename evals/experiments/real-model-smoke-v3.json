@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "r7-provider-checkspec-control-smoke-v3",
+  "createdAt": "2026-10-06",
+  "dataClass": "real-model-smoke-only",
+  "retrospectiveRecord": true,
+  "qualityClaim": false,
+  "task": {
+    "id": "short-regression-01",
+    "fixture": "evals/fixtures/short-regression-01/task.json",
+    "fixtureHash": "sha256:825227494829df94590ea87ffe65dd4838ce4347b995beca6d9b32d149800ba0",
+    "oracle": "evals/oracles/short-regression-01.mjs",
+    "oracleId": "short-regression-01-hidden-v1",
+    "oracleHash": "sha256:49a06067ecc1fd295475288511c0740a878a948ef552b103f27b97b678650763",
+    "runtimeCheckOverlayHash": "sha256:ed4ba3fbcbadfab0aa416644670f3f7eebadd550c0c494fa930b0c9cb0a00666"
+  },
+  "candidate": {
+    "head": "256e476ef5bdd624526c1ea306c755fd4ad354e7",
+    "worktreeSnapshotHash": "sha256:6b7204a9e37b41f5854d6ed881a8796d003fe5d6fbb66c7b29dc0ca8528a7e46"
+  },
+  "provider": {
+    "id": "https://api.deepseek.com",
+    "modelId": "deepseek-v4-pro",
+    "modelRevision": "unknown",
+    "sampling": { "temperature": null, "topP": null, "seed": "unknown" }
+  },
+  "condition": {
+    "id": "actlume-control",
+    "memoryEnabled": false,
+    "policyRules": {
+      "actlume.workflow.efficiency": "disabled",
+      "actlume.task.scope-precheck": "disabled"
+    },
+    "policyConfigHash": "sha256:159fa3c05f032c08bb6dad2079e3b8b849bd034bcd17d4c83be089c3f8e4fdec",
+    "profileManifestId": "actlume-core-v1-condition-design",
+    "profileManifestHash": "sha256:c3101aed54892425bbd981f8372f321a57518630cbb2ffccf6fa44afea2ce12e",
+    "permissionMode": "acceptEdits",
+    "headlessExactCheckSpecAutoapproval": true,
+    "mcp": "isolated-empty-config"
+  },
+  "executionOrder": [
+    { "taskId": "short-regression-01", "condition": "actlume-control", "repeatIndex": 0 }
+  ],
+  "limits": {
+    "maxAttempts": 1,
+    "maxUpstreamRequests": 8,
+    "maxOutputTokensPerRequest": 512,
+    "maxReportedTokens": 20000,
+    "maxDurationMs": 120000,
+    "observedUsage": { "requests": 5, "knownUsageResponses": 5, "inputTokens": 24822, "outputTokens": 741, "totalTokens": 25563 },
+    "tokenLimitBehavior": "New provider calls stop after completed-response usage reaches the threshold; the in-flight fifth response exceeded the 20000 threshold by 5563 tokens."
+  },
+  "run": {
+    "rawReport": ".agent-benchmark/real-model-smoke/short-regression-01-938d18ae-8c56-4863-a538-f167a2501bd5/report.json",
+    "runtimeEvents": ".agent-benchmark/real-model-smoke/short-regression-01-938d18ae-8c56-4863-a538-f167a2501bd5/memory/events/cdfce178-656a-4c49-8234-5dfb252f4a71.jsonl",
+    "patch": ".agent-benchmark/real-model-smoke/short-regression-01-938d18ae-8c56-4863-a538-f167a2501bd5/patch.diff",
+    "runtimeStatus": "completed",
+    "runtimeEvidence": "checks_passed",
+    "runtimeVerdict": "unjudged",
+    "exitCode": 0,
+    "oracleVerdict": "pass",
+    "oracleChecks": 5,
+    "completionClaimStatus": "claimed_complete",
+    "toolCalls": { "requested": 8, "executed": 8, "blocked": 0 },
+    "headlessCheckSpecApproval": {
+      "checkSpecId": "real-model-smoke-short-regression",
+      "reasonCode": "EXACT_CONFIGURED_CHECKSPEC_AUTOAPPROVED",
+      "count": 1
+    }
+  },
+  "reportCorrection": {
+    "path": "condition.policyConfigHash",
+    "rawReportValue": "sha256:2d8026686c050ef70fc29a69161b56a7a53e3ca1373f719bc90e32206410c47e",
+    "correctValueFromRunStartedEvent": "sha256:159fa3c05f032c08bb6dad2079e3b8b849bd034bcd17d4c83be089c3f8e4fdec",
+    "reason": "The smoke producer hashed JSON.stringify(PolicyConfig) but labeled it policyConfigHash. The runtime event has the canonical policyConfigHash; the producer was corrected for subsequent runs. The raw report remains unchanged."
+  },
+  "limitations": [
+    "One control attempt only; it does not estimate resolve rate or memory/guardrail effects.",
+    "The provider model revision and sampling settings are unknown; strict pairing is invalid.",
+    "Runtime keeps task verdict unjudged even though the separate oracle passes; the oracle is not converted into a human/runtime acceptance event.",
+    "The response crossed the 20000 token ceiling by 5563 tokens before the proxy could block a subsequent request. No dollar-cost ceiling was established."
+  ]
+}

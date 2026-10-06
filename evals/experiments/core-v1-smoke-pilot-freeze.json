@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "actlume-core-v1-smoke-pilot",
+  "status": "frozen-pilot-incomplete-not-core-experiment",
+  "createdAt": "2026-10-06",
+  "purpose": "Exercise the same bounded model task under each predeclared Actlume condition before deciding whether the complete core experiment is affordable and operationally stable.",
+  "candidate": {
+    "head": "256e476ef5bdd624526c1ea306c755fd4ad354e7",
+    "snapshotHash": "recorded-in-.agent-benchmark/frozen-experiments/actlume-core-v1-smoke-pilot.lock.json-before-first-attempt"
+  },
+  "task": {
+    "id": "short-regression-01",
+    "fixture": "evals/fixtures/short-regression-01/task.json",
+    "fixtureCanonicalSha256": "825227494829df94590ea87ffe65dd4838ce4347b995beca6d9b32d149800ba0",
+    "oracle": "evals/oracles/short-regression-01.mjs",
+    "oracleSha256": "49a06067ecc1fd295475288511c0740a878a948ef552b103f27b97b678650763",
+    "checkOverlaySha256": "ed4ba3fbcbadfab0aa416644670f3f7eebadd550c0c494fa930b0c9cb0a00666"
+  },
+  "sharedControls": {
+    "permissionMode": "acceptEdits",
+    "mcp": "isolated-empty-config",
+    "toolSchema": "same-across-conditions",
+    "headlessCheckSpecApproval": "enabled-only-for-exact-frozen-CheckSpec-command-and-cwd",
+    "attemptWorkspaceAndMemoryStore": "fresh-per-attempt",
+    "providerModelRevisionAndSampling": "recorded-as-reported; unknown values remain unknown"
+  },
+  "executionOrder": [
+    { "taskId": "short-regression-01", "condition": "actlume-full", "repeatIndex": 0 },
+    { "taskId": "short-regression-01", "condition": "actlume-control", "repeatIndex": 0 },
+    { "taskId": "short-regression-01", "condition": "actlume-memory", "repeatIndex": 0 },
+    { "taskId": "short-regression-01", "condition": "actlume-guardrails", "repeatIndex": 0 }
+  ],
+  "limits": {
+    "maxAttempts": 4,
+    "maxUpstreamRequestsPerAttempt": 8,
+    "maxReportedTokensPerAttempt": 20000,
+    "maxOutputTokensPerRequest": 512,
+    "maxDurationMsPerAttempt": 120000,
+    "stopStartingAttemptsAfterCumulativeReportedTokensReach": 80000,
+    "inFlightRequestCaveat": "The local proxy blocks subsequent requests after reported usage reaches the per-attempt limit, so one in-flight response may exceed it. Cumulative stopping is checked before each attempt and cannot roll back a request already sent."
+  },
+  "analysisPlan": {
+    "classification": "integration-and-cost-pilot-only",
+    "pairing": "unknown model revision or sampling excludes strict paired inference",
+    "reportAllAttempts": true,
+    "doNotClaim": [
+      "strategy benefit",
+      "task-quality rate",
+      "memory transfer benefit",
+      "guardrail benefit",
+      "holdout generalization"
+    ],
+    "completionRequirement": "This pilot does not complete R7-01 or R7-02. Freeze a separate development/holdout experiment and run the planned interleaved repeats after reviewing provider usage and task applicability."
+  }
+}

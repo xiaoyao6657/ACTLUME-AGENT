@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "artifact-recall-01",
+  "category": "long-context",
+  "prompt": "Inspect the generated large diagnostic artifact, then report the exact incident identifier for the cache invalidation record and the condition recorded next to it. Do not guess from repository decoys.",
+  "files": {
+    "package.json": "{\"type\":\"module\"}\n",
+    "README.md": "Diagnostic output is attached by the runner as an Actlume artifact. Search the artifact rather than guessing from this note.\n",
+    "decoys.txt": "Incident ID: INC-0000 condition: decoy\n"
+  },
+  "requiredFiles": ["README.md"],
+  "oracleId": "artifact-recall-01-hidden-v1",
+  "protocol": {
+    "artifacts": [
+      {
+        "name": "diagnostics.log",
+        "noiseLine": "record: routine cache check; status=ok\n",
+        "sentinelLine": "record: INC-48271 · cache invalidation skipped after config reload\n",
+        "repetitions": 8000
+      }
+    ],
+    "actions": [
+      { "toolName": "readArtifact", "input": { "path": "{{ARTIFACT:diagnostics.log}}", "offset": 0, "limit": 20000 } }
+    ],
+    "finalText": "The requested record is INC-48271; the condition was cache invalidation skipped after config reload."
+  }
+}

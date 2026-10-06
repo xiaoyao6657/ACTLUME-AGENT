@@ -6,8 +6,10 @@ dist/
 .agent-security.json
 .actlume/config.json
 .actlume/config.local.json
+.actlume/policies.json
 .agent-memory/
 .agent-benchmark/
+.agent-benchmark/protocol-runs/
 .claude/
 __pycache__/
 *.py[cod]

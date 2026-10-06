@@ -21,7 +21,7 @@ export const taskListTool: ToolDefinition = {
     properties: {}
   },
   async run(_input, ctx) {
-    const tasks = await new TaskTracker(ctx.memoryDir).list();
+    const tasks = await new TaskTracker(ctx.memoryDir, ctx.cwd).list();
     return toolSuccess(formatTasks(tasks), { count: tasks.length });
   }
 };
@@ -39,7 +39,7 @@ export const taskAddTool: ToolDefinition = {
   },
   async run(input, ctx) {
     const args = addTaskSchema.parse(input);
-    const task = await new TaskTracker(ctx.memoryDir).add(args.title);
+    const task = await new TaskTracker(ctx.memoryDir, ctx.cwd).add(args.title);
     return toolSuccess(`Added task ${task.id}: ${task.title}`, task);
   }
 };
@@ -58,7 +58,7 @@ export const taskUpdateTool: ToolDefinition = {
   },
   async run(input, ctx) {
     const args = updateTaskSchema.parse(input);
-    const task = await new TaskTracker(ctx.memoryDir).updateStatus(args.id, args.status);
+    const task = await new TaskTracker(ctx.memoryDir, ctx.cwd).updateStatus(args.id, args.status);
     if (!task) {
       return toolFailure({
         content: `Task not found: ${args.id}`,
