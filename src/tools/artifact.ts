@@ -1,5 +1,5 @@
 import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { toolSuccess, toolFailure } from "../tool-result.js";
 import type { ToolDefinition } from "../types.js";
@@ -36,21 +36,16 @@ export const readArtifactTool: ToolDefinition = {
       throw error;
     }
     const candidate = resolve(args.path);
-    const requestedOutsideRoot = isOutsideRoot(relative(comparablePath(root), comparablePath(candidate)));
-    if (requestedOutsideRoot) {
-      return toolFailure({
-        content: "Artifact path must be inside this Actlume memory directory's artifacts folder.",
-        errorCode: "ARTIFACT_PATH_OUTSIDE_ROOT",
-        retryable: false
-      });
-    }
+    const requestedRoot = resolve(ctx.memoryDir, "artifacts");
+    const requestedOutsideRoot = !isWithinRoot(requestedRoot, candidate);
     try {
       const actualPath = await realpath(candidate);
-      const actualRelative = relative(comparablePath(root), comparablePath(actualPath));
-      if (isOutsideRoot(actualRelative)) {
+      if (!isWithinRoot(root, actualPath)) {
         return toolFailure({
-          content: "Artifact symlinks outside the artifacts folder are not allowed.",
-          errorCode: "ARTIFACT_SYMLINK_OUTSIDE_ROOT",
+          content: requestedOutsideRoot
+            ? "Artifact path must be inside this Actlume memory directory's artifacts folder."
+            : "Artifact symlinks outside the artifacts folder are not allowed.",
+          errorCode: requestedOutsideRoot ? "ARTIFACT_PATH_OUTSIDE_ROOT" : "ARTIFACT_SYMLINK_OUTSIDE_ROOT",
           retryable: false
         });
       }
@@ -62,6 +57,18 @@ export const readArtifactTool: ToolDefinition = {
       return toolSuccess(header + "\n" + chunk, { path: actualPath, chars: content.length, offset: args.offset, nextOffset });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        const ancestor = await realpathNearestExistingAncestor(candidate);
+        if (!isWithinRoot(root, ancestor)) {
+          return toolFailure({
+            content: requestedOutsideRoot
+              ? "Artifact path must be inside this Actlume memory directory's artifacts folder."
+              : "Artifact symlinks outside the artifacts folder are not allowed.",
+            errorCode: requestedOutsideRoot ? "ARTIFACT_PATH_OUTSIDE_ROOT" : "ARTIFACT_SYMLINK_OUTSIDE_ROOT",
+            retryable: false
+          });
+        }
+      }
       return toolFailure({
         content: code === "ENOENT" ? "Artifact does not exist." : "Unable to read artifact: " + (error as Error).message,
         errorCode: code === "ENOENT" ? "ARTIFACT_NOT_FOUND" : "ARTIFACT_READ_FAILED",
@@ -75,6 +82,24 @@ function comparablePath(path: string): string {
   if (process.platform !== "win32") return path;
   if (path.startsWith("\\\\?\\UNC\\")) return "\\\\" + path.slice(8);
   return path.startsWith("\\\\?\\") ? path.slice(4) : path;
+}
+
+async function realpathNearestExistingAncestor(path: string): Promise<string> {
+  let candidate = comparablePath(path);
+  while (true) {
+    try {
+      return await realpath(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(candidate);
+      if (parent === candidate) throw error;
+      candidate = parent;
+    }
+  }
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  return !isOutsideRoot(relative(comparablePath(root), comparablePath(candidate)));
 }
 
 function isOutsideRoot(path: string): boolean {

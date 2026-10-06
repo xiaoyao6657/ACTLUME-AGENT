@@ -405,6 +405,16 @@
 - 未覆盖边界：本地 Windows 全量通过不能代替 hosted Windows runner；当前还需由 PR 最新 commit 的两端 Actions 验证。
 - 状态：实现和本地回归已验收；最新 hosted 复验待执行。
 
+## 2026-10-07：Windows hosted runner 将有效 artifact 读取误判为越界
+
+- 关联：R5-08、R6-07。
+- 触发/观察：PR #1 commit `6ae8b7c` 的 Ubuntu job 通过、Windows job 失败；既有扩展路径 artifact 读取在 `src/tools/artifact.test.ts:29` 失败，Pi compaction/reopen 集成测试中的普通 artifact 回读也在 `src/pi-runtime.test.ts:556` 失败。日志：<https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37501138407/job/112398139390>。
+- 根因：上一修复在访问目标前，将 `realpath()` 得到的 canonical artifact root 与尚未 canonicalize 的输入路径做 containment 比较并立即拒绝。GitHub Windows runner 上等价路径表示不同，导致 `relative()` 产出跨根路径；已有文件本应先 `realpath(candidate)` 再作最终物理边界检查。相同表示差异也会影响 `ENOENT` 请求分类。
+- 采用方案与替代方案：对已存在文件，只依据 canonical root 和 canonical target 判断是否越界；对 `ENOENT`，沿请求路径向上解析最近的现存祖先，再确认该祖先是否属于 artifact root，区分根内缺失和根外请求。若现存目标在物理根外，仍根据请求路径的词法位置区分直接越界与 root 内 symlink escape。替代方案是保留早期词法拒绝，会继续拒绝有效 Windows alias；将所有 `ENOENT` 当作 not-found 则会把 root 外请求混为一类。
+- 验证证据：增量候选 `sha256:a857d20fa11ac35e72eea8105bdd145733e2782f750d6532291867bc8fc4ae15`（相对 base `6ae8b7c…`，1 个 production input）本机 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 deterministic protocol/oracle 全通过；15 张 fixture/oracle preflight 完成且 `qualityClaim=false`。artifact 单测覆盖普通/扩展路径的现存文件读取和缺失文件分类；Pi compaction/reopen artifact 回读集成测试通过。
+- 未覆盖边界：本地 Windows 结果不能替代 GitHub hosted runner；修复版本的最新双平台 Actions 尚待提交后运行。fixture preflight 和 deterministic protocol 只验证 harness/runtime contract，不证明真实模型任务质量。
+- 状态：代码与本地回归已通过；hosted 复验待执行。
+
 ## 难题条目模板
 
 复制此结构并填写，不存在的证据标为未知：
