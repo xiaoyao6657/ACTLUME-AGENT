@@ -36,17 +36,21 @@ export const readArtifactTool: ToolDefinition = {
       throw error;
     }
     const candidate = resolve(args.path);
-    const requestedRelative = relative(root, candidate);
-    const requestedOutsideRoot = isOutsideRoot(requestedRelative);
+    const requestedOutsideRoot = isOutsideRoot(relative(comparablePath(root), comparablePath(candidate)));
+    if (requestedOutsideRoot) {
+      return toolFailure({
+        content: "Artifact path must be inside this Actlume memory directory's artifacts folder.",
+        errorCode: "ARTIFACT_PATH_OUTSIDE_ROOT",
+        retryable: false
+      });
+    }
     try {
       const actualPath = await realpath(candidate);
-      const actualRelative = relative(root, actualPath);
+      const actualRelative = relative(comparablePath(root), comparablePath(actualPath));
       if (isOutsideRoot(actualRelative)) {
         return toolFailure({
-          content: requestedOutsideRoot
-            ? "Artifact path must be inside this Actlume memory directory's artifacts folder."
-            : "Artifact symlinks outside the artifacts folder are not allowed.",
-          errorCode: requestedOutsideRoot ? "ARTIFACT_PATH_OUTSIDE_ROOT" : "ARTIFACT_SYMLINK_OUTSIDE_ROOT",
+          content: "Artifact symlinks outside the artifacts folder are not allowed.",
+          errorCode: "ARTIFACT_SYMLINK_OUTSIDE_ROOT",
           retryable: false
         });
       }
@@ -58,17 +62,20 @@ export const readArtifactTool: ToolDefinition = {
       return toolSuccess(header + "\n" + chunk, { path: actualPath, chars: content.length, offset: args.offset, nextOffset });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      const outsideRoot = code === "ENOENT" && requestedOutsideRoot;
       return toolFailure({
-        content: outsideRoot
-          ? "Artifact path must be inside this Actlume memory directory's artifacts folder."
-          : code === "ENOENT" ? "Artifact does not exist." : "Unable to read artifact: " + (error as Error).message,
-        errorCode: outsideRoot ? "ARTIFACT_PATH_OUTSIDE_ROOT" : code === "ENOENT" ? "ARTIFACT_NOT_FOUND" : "ARTIFACT_READ_FAILED",
+        content: code === "ENOENT" ? "Artifact does not exist." : "Unable to read artifact: " + (error as Error).message,
+        errorCode: code === "ENOENT" ? "ARTIFACT_NOT_FOUND" : "ARTIFACT_READ_FAILED",
         retryable: code !== "ENOENT"
       });
     }
   }
 };
+
+function comparablePath(path: string): string {
+  if (process.platform !== "win32") return path;
+  if (path.startsWith("\\\\?\\UNC\\")) return "\\\\" + path.slice(8);
+  return path.startsWith("\\\\?\\") ? path.slice(4) : path;
+}
 
 function isOutsideRoot(path: string): boolean {
   return isAbsolute(path) || path === ".." || path.startsWith(".." + sep);

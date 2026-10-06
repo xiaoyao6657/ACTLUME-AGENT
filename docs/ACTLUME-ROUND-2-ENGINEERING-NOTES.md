@@ -395,6 +395,16 @@
 - 未覆盖边界：这解决的是本地快照一致性；托管 CI 仍用独立 checkout 和平台 runner 验证。
 - 状态：候选副本已清理并复验一致。
 
+## 2026-10-07：Windows runner 上不存在的 artifact 被扩展路径前缀误报为越界
+
+- 关联：R5-08、R6-07。
+- 触发/观察：PR #1 commit `9d4d6a7` 的 hosted Windows job 第二次运行时，原先的 extended-length 已存在文件读取回归通过，但同一测试中仓库内缺失文件的断言失败：期望 `ARTIFACT_NOT_FOUND`，实际返回 `ARTIFACT_PATH_OUTSIDE_ROOT`。Ubuntu job 通过。日志见 `https://github.com/xiaoyao6657/ACTLUME-AGENT/actions/runs/37497953580/job/112387247780`。
+- 根因：Windows runner 的 `realpath()` 返回路径与 `resolve()` 得到的普通/扩展路径格式不一致。已有文件的 `realpath()` 会让路径比较成功，但在文件不存在时只能比较尚未 canonicalize 的路径；`relative()` 把等价的 drive root 当成不相容路径，进而误判越界。本地 Windows runner 的临时路径格式没有触发这个差异。
+- 采用方案与替代方案：在执行相对路径包含检查前，统一比较路径表示：Windows 下将 `\\?\\` drive 前缀去除，并把 `\\?\\UNC\\` 转回普通 UNC；然后仍对现存目标执行 `realpath()`，单独拒绝真正的 symlink escape。测试覆盖普通路径与 `\\?\\` 路径下的缺失 artifact 都返回 `ARTIFACT_NOT_FOUND`，并覆盖已有扩展路径读取与 outside-root 拒绝。替代方案是仅在本机通过后忽略 hosted failure，或把一切 `ENOENT` 都当作 not-found；前者遗漏平台差异，后者会混淆目录外缺失请求。
+- 验证证据：增量候选 `sha256:49dd8d0d7958685aafa453b9628b4c7d99b7ce8033eb66d877648ec988c095e3`（相对 base `9d4d6a75…`）的 Windows `npm run ci` 通过 192/192 tests、16/16 benchmarks；`npm run smoke:package` 通过；九张 Windows protocol/oracle 均通过，15 张 fixture preflight 完成且 `qualityClaim=false`。最新 hosted PR rerun 仍待执行。
+- 未覆盖边界：本地 Windows 全量通过不能代替 hosted Windows runner；当前还需由 PR 最新 commit 的两端 Actions 验证。
+- 状态：实现和本地回归已验收；最新 hosted 复验待执行。
+
 ## 难题条目模板
 
 复制此结构并填写，不存在的证据标为未知：

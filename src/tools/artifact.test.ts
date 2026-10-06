@@ -36,9 +36,13 @@ test("readArtifact accepts artifacts inside memoryDir and rejects paths outside 
     assert.equal(denied.ok, false);
     if (!denied.ok) assert.equal(denied.errorCode, "ARTIFACT_PATH_OUTSIDE_ROOT");
 
-    const missing = await readArtifactTool.run({ path: resolve(memoryDir, "artifacts", "missing.txt") }, ctx);
-    assert.equal(missing.ok, false);
-    if (!missing.ok) assert.equal(missing.errorCode, "ARTIFACT_NOT_FOUND");
+    const missingPath = resolve(memoryDir, "artifacts", "missing.txt");
+    const missingPaths = process.platform === "win32" ? [missingPath, "\\\\?\\" + missingPath] : [missingPath];
+    for (const path of missingPaths) {
+      const missing = await readArtifactTool.run({ path }, ctx);
+      assert.equal(missing.ok, false);
+      if (!missing.ok) assert.equal(missing.errorCode, "ARTIFACT_NOT_FOUND");
+    }
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

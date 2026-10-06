@@ -35,19 +35,19 @@ npm run baseline:worktree
 
 第二轮通过后增加新的源码与测试。后续 CI 结果必须注明其候选 manifest hash，不能继续将这里的历史计数写作最新结果。
 
-## 最新第二轮候选验证（2026-10-07）
+## 最新增量候选验证（2026-10-07）
 
 | 字段 | 值 |
 | --- | --- |
-| 候选 manifest SHA-256 | `e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03` |
-| 覆盖的变更生产输入 | 4（相对基线 HEAD） |
-| Candidate base HEAD / branch | `0829c3a543a67f82065b8d5f6051693f59ad8261` / `codex/actlume-pi-migration` |
-| Windows/Linux 本地 release dry-run | Current candidate `sha256:e34d0393be5931f6de41c029c46139f3ae493c8a2f54afc2be805c9a9fddcc03` passes Windows and Ubuntu 24.04 WSL2/ext4 native Linux typecheck, 192/192 tests, 16/16 benchmarks, and npm pack (116 files). Logs: `.agent-benchmark/windows-ci/ci-final-e34d0393.log` and `.agent-benchmark/linux-ci/release-dry-final-e34d0393-native.log`. |
-| Windows/Linux deterministic protocol | Nine cards pass independent oracles on both platforms for current candidate `e34d0393…cc03`; Windows summary `.agent-benchmark/protocol-runs/summary-final-e34d0393-windows.json`, Linux summary `.agent-benchmark/linux-ci/protocol-runs/summary-final-e34d0393-native.json`. These validate harness/runtime contracts only. |
-| Windows/Linux package smoke | Production-only package smoke passes on both platforms for candidate `e34d0393…cc03`; logs `.agent-benchmark/windows-ci/package-smoke-final-e34d0393.log` and `.agent-benchmark/linux-ci/package-smoke-final-e34d0393-native.log`. |
-| Fixture/oracle preflight | Windows and native Linux preflight 15 fixture/baseline-oracle pairs for `e34d0393…cc03`; no Agent task quality is measured. Reports `.agent-benchmark/windows-ci/fixture-preflight-final-e34d0393.json` and `.agent-benchmark/linux-ci/fixture-preflight-final-e34d0393-native.json`. |
-| Windows/Linux TUI smoke | Current candidate `e34d0393…cc03` passes native-Linux PTY input/resize/exit, deterministic-provider approval denial, and interruption/recovery transcript; reports under `.agent-benchmark/demo/tui-pty-matrix-e34d0393-native/`, `.agent-benchmark/demo/tui-approval-pty-e34d0393-native/`, and `.agent-benchmark/demo/interrupt-recovery-e34d0393-native.*`. Drivers isolate Pi configuration and MCP. Human Windows/Linux IME, focus, long-history, visual checks and continuous recording are pending. |
-| 真实模型 campaign | Bounded provider smoke, development 24/24 and post-freeze confirmation 8/8 ran on `eb941e32…36c4ca`, not the current `e34d0393…cc03` source (four production-input changes since the campaign). Usage was complete, but outcomes were mixed, provider revision/sampling unknown, and confirmation cards reused; no strategy-benefit conclusion follows. |
-| Hosted CI / 人工矩阵 | PR #1 previous run: Ubuntu passed; Windows failed on artifact path canonicalization. The fix is in `e34d0393…cc03`; latest PR hosted rerun is pending. Human Windows Terminal/Linux input matrix and continuous TUI video remain pending; automated Linux PTY evidence is above. |
+| 候选 manifest SHA-256 | `49dd8d0d7958685aafa453b9628b4c7d99b7ce8033eb66d877648ec988c095e3` |
+| 覆盖的变更生产输入 | 2（相对 base commit） |
+| Candidate base HEAD / branch | `9d4d6a75d0b7eeb11215a1dba3dd484e6ace02a0` / `codex/actlume-pi-migration` |
+| Windows/Linux 本地 release dry-run | Current incremental candidate `49dd8d0d…c095e3`: Windows `npm run ci` passes 192 tests and 16 benchmarks, plus production package smoke; current Linux hosted rerun is pending. Preceding candidate `e34d0393…cc03` passed Windows and Ubuntu 24.04 WSL2/ext4 native Linux release dry (192 tests, 16 benchmarks, 116-file pack). |
+| Windows/Linux deterministic protocol | Nine independent oracle cards pass on current Windows candidate `49dd8d0d…c095e3` and preceding Ubuntu native Linux candidate `e34d0393…cc03`; reports are `.agent-benchmark/protocol-runs/candidate-49dd-<task>.json` and `.agent-benchmark/linux-ci/protocol-runs/summary-final-e34d0393-native.json`. These validate harness/runtime contracts only. |
+| Windows/Linux package smoke | Production-only package smoke passes on current Windows candidate `49dd8d0d…cc03`; preceding candidate `e34d0393…cc03` passed both Windows and Ubuntu native Linux package smoke. Latest hosted Linux packaged smoke is pending. |
+| Fixture/oracle preflight | Windows preflight on current candidate `49dd8d0d…cc03` and native Linux preflight on preceding candidate `e34d0393…cc03` calibrate 15 fixture/oracle pairs; no Agent task quality is measured. |
+| Windows/Linux TUI smoke | Automated Linux PTY input/resize/exit, deterministic-provider approval denial, and interruption/recovery transcript were recorded on preceding candidate `e34d0393…cc03`; human Windows/Linux IME, focus, long-history, visual checks and continuous recording remain pending. |
+| 真实模型 campaign | Bounded provider smoke, development 24/24 and post-freeze confirmation 8/8 ran on `eb941e32…36c4ca`, not current candidate `49dd8d0d…c095e3` (four production-input changes since the campaign). Usage was complete, outcomes mixed, provider revision/sampling unknown, and confirmation cards reused; no strategy-benefit conclusion follows. |
+| Hosted CI / 人工矩阵 | PR #1 run on `9d4d6a7` passed Ubuntu and failed Windows when a missing in-root artifact was classified as outside root. Fix is in current incremental candidate `49dd8d0d…c095e3`; latest PR rerun is pending. Human Windows Terminal/Linux input matrix and continuous TUI video remain pending. |
 
-更早的 946a、eff97d、0db2ec7a、01372678、c3e044f5、b2ea6ca1、eb941e32 与 8171b1cd 候选报告保留在各自历史路径；它们不是当前候选的精确哈希证据。旧 WSL Linux 日志使用 Windows `node.exe`，现已排除；当前的 native Linux 报告明确由 Ubuntu Node 24.14.1 生成。当前候选的 Windows/Linux 九卡 JSON `candidateWorktreeHash` 均与本表 hash 一致。所有 deterministic 报告只验 harness/runtime contract，不代表真实模型质量。
+更早的 946a、eff97d、0db2ec7a、01372678、c3e044f5、b2ea6ca1、eb941e32、8171b1cd 与 `e34d0393` 候选报告保留在各自历史路径；它们不是当前增量候选的精确哈希证据。旧 WSL Linux 日志使用 Windows `node.exe`，现已排除；e34 的 native Linux 报告明确由 Ubuntu Node 24.14.1 生成。当前 Windows protocol JSON 的 `candidateWorktreeHash` 为 `49dd8d0d…c095e3`，Linux protocol 汇总对应前一候选 `e34d0393…cc03`。所有 deterministic 报告只验 harness/runtime contract，不代表真实模型质量。
