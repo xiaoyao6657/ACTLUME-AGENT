@@ -425,6 +425,17 @@
 - 未覆盖边界：自动 PTY 不模拟 OS IME，也不评估真实终端布局、长历史滚动和用户对审批焦点的可辨识性；没有 Windows TUI 实测或连续交互录屏。R6-09/G6 人工项目仍未完成。
 - 状态：最新代码的 Linux 自动 PTY 与审批拒绝复验通过；人工 Windows/Linux 矩阵和连续录屏仍待执行。
 
+## 2026-10-07：自动审批驱动不能作为真人 TUI 验收入口
+
+- 关联：R6-09、G6。
+- 触发/观察：现有 `tui-approval-pty-smoke.py` 会创建 PTY、启动 TUI 并注入按键，适合检查协议和副作用，却不能让验收者亲自确认 OS IME、视觉布局或按钮焦点。改用真实模型则会把 provider 配置、网络和 API 成本带进演示，并可能继承用户 MCP 配置。
+- 根因：人工矩阵要求观察真实终端窗口与真人输入法组合过程；自动按键 transcript 不携带这些视觉/OS 状态。原 PTY harness 的职责是自动化协议验证，没有交互式人工操作模式。
+- 采用方案与替代方案：新增 `docs/support/tui-manual-provider.py`，仅绑定 `127.0.0.1`，不启动/控制终端、不发按键、不访问上游；它为每个新用户 turn 提供固定 harmless shell approval，另有只打印 80 行的长输出场景和首请求延迟场景。验收者在另一终端手动启动 Actlume，并把 Pi 配置、MCP 配置、记忆目录指向临时位置。替代方案是沿用自动 PTY 冒充人工验收（无法满足 gate），或调用真实 provider（增加费用、网络与配置污染变量）。
+- 验证证据：`python docs/support/tui-manual-provider.py --self-test` 在 Windows Python 3.13.5 与 Ubuntu 24.04 WSL2 Python 下通过 approval 与 long-output 两组 SSE tool-offer/denial-follow-up 场景；long-output shell payload 另在 PowerShell 实际执行并验证打印 80 行 marker、未触碰文件。随后让真实 Actlume/Pi headless `--json` 使用该 provider，捕获两次请求（shell call → denial follow-up），结构化 exit code 为 3、run status `completed`；领域事件只有 shell `PERMISSION_BLOCKED`，没有 tool execution start，`changedFiles=0`。摘要见 `.agent-benchmark/demo/tui-manual-provider-integration.json`。该集成检查没有启动 TUI，也不计作人工矩阵结果。
+- 追加观察与处理：首次 headless 集成结束时，Python HTTP server 在读取已关闭连接的下一条 request line 时输出 `ConnectionResetError` traceback，尽管两次 SSE 响应和 Actlume 结果均成功。根因是客户端关闭 HTTP connection 的时序，不是 provider 协议失败。`LoopbackHTTPServer.handle_error` 现在只将 BrokenPipe/Reset/Aborted 视作正常断连并输出简短提示；其他异常保留 traceback。修改后再次执行同一 headless 集成，provider 输出 `client disconnected from the local mock` 且无 traceback。
+- 未覆盖边界：self-test 只校验本地 mock provider 的 OpenAI-compatible stream schema 和场景选择，不能代表 Pi TUI 接入成功或人工视觉验收通过；Windows/Linux 真实终端步骤必须由操作者完成并填写 checklist。
+- 状态：人工验收现在有零外网、零 API 成本的可复现启动路径；R6-09/G6 仍等待真人矩阵和录屏证据。
+
 ## 难题条目模板
 
 复制此结构并填写，不存在的证据标为未知：
