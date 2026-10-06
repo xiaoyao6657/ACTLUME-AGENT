@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { z } from "zod";
 import { toolFailure, toolSuccess } from "./tool-result.js";
-import type { ToolDefinition, ToolResult, ToolSideEffect } from "./types.js";
+import type { ToolContext, ToolDefinition, ToolResult, ToolSideEffect } from "./types.js";
 
 const mcpServerConfigSchema = z.object({
   command: z.string().min(1),
@@ -23,6 +23,15 @@ const mcpConfigSchema = z.object({
 
 export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 export type McpConfig = z.infer<typeof mcpConfigSchema>;
+
+export function mcpPiMigrationWarnings(config: McpConfig): string[] {
+  return Object.entries(config.servers).flatMap(([name, server]) => {
+    if (server.disabled) return [];
+    const warnings = [`${name}: Pi controls MCP connection startup; Actlume startupTimeoutMs (${server.startupTimeoutMs}ms) is not enforced by the Pi runtime.`];
+    if (server.toolPrefix) warnings.push(`${name}: toolPrefix '${server.toolPrefix}' is not applied by Pi; Pi assigns MCP tool names.`);
+    return warnings;
+  });
+}
 
 export type McpLoadedServer = {
   name: string;
@@ -66,18 +75,27 @@ export class McpToolManager {
   }
 }
 
+export async function readMcpConfig(params: {
+  workspace: string;
+  projectRoot: string;
+  configPath?: string;
+}): Promise<{ configPath?: string; config: McpConfig }> {
+  const configPath = await findMcpConfigPath(params);
+  if (!configPath) {
+    return { config: { servers: {} } };
+  }
+
+  const raw = await readFile(configPath, "utf8");
+  return { configPath, config: mcpConfigSchema.parse(JSON.parse(raw)) };
+}
+
 export async function loadMcpToolManager(params: {
   workspace: string;
   projectRoot: string;
   configPath?: string;
 }): Promise<McpToolManager> {
-  const configPath = await findMcpConfigPath(params);
-  if (!configPath) {
-    return new McpToolManager(undefined, [], [], []);
-  }
-
-  const raw = await readFile(configPath, "utf8");
-  const config = mcpConfigSchema.parse(JSON.parse(raw));
+  const { configPath, config } = await readMcpConfig(params);
+  if (!configPath) return new McpToolManager(undefined, [], [], []);
   const loadedServers: McpLoadedServer[] = [];
   const warnings: string[] = [];
   const statuses: McpServerStatus[] = [];
@@ -199,13 +217,13 @@ function toToolDefinition(
     sideEffect,
     source: "mcp",
     parameters: tool.inputSchema,
-    async run(input) {
+    async run(input, ctx: ToolContext) {
       try {
         const result = await withTimeout(
           client.callTool({
             name: tool.name,
             arguments: isRecord(input) ? input : {}
-          }),
+          }, undefined, { signal: ctx.signal }),
           serverConfig.toolTimeoutMs,
           `MCP tool ${exposedName} timed out after ${serverConfig.toolTimeoutMs}ms`
         );
@@ -213,10 +231,15 @@ function toToolDefinition(
       } catch (error) {
         const message = (error as Error).message;
         return toolFailure({
-          content: message,
-          errorCode: message.includes("timed out") ? "MCP_TOOL_TIMEOUT" : "MCP_TOOL_EXCEPTION",
-          retryable: true,
-          metadata: { serverName, toolName: tool.name, exposedName }
+          content: ctx.signal?.aborted
+            ? `${exposedName} was cancelled locally, but the MCP server may have completed the request. Its side effect is unknown; inspect server/workspace state before retrying.`
+            : message.includes("timed out")
+              ? `${message}. The remote operation may still have completed; inspect server/workspace state before retrying.`
+              : `${message}. The remote operation outcome is unknown; inspect server/workspace state before retrying.`,
+          errorCode: ctx.signal?.aborted ? "MCP_OUTCOME_UNKNOWN_AFTER_CANCEL"
+            : message.includes("timed out") ? "MCP_TIMEOUT_OUTCOME_UNKNOWN" : "MCP_REQUEST_OUTCOME_UNKNOWN",
+          retryable: false,
+          metadata: { serverName, toolName: tool.name, exposedName, outcome: "unknown", cancellationObserved: ctx.signal?.aborted === true }
         });
       }
     }

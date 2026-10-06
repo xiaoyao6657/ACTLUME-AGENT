@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { runAgent } from "./agent.js";
@@ -11,6 +11,7 @@ import { defaultSecurityPolicy } from "./security.js";
 import { runRegisteredTool } from "./tool-scheduler.js";
 import type { ToolContext, ToolResult } from "./types.js";
 import { tools } from "./tools/registry.js";
+import { createIsolatedBenchmarkWorkspace } from "./benchmark-workspace.js";
 
 type BenchmarkCase = {
   id: string;
@@ -36,9 +37,9 @@ type BenchmarkReport = {
   results: BenchmarkCaseResult[];
 };
 
-const benchmarkRoot = resolve(process.cwd(), ".agent-benchmark");
 const memoryDir = resolve(process.cwd(), ".agent-memory");
-const benchmarkMemoryDir = resolve(benchmarkRoot, ".agent-memory");
+let benchmarkRoot = "";
+let benchmarkMemoryDir = "";
 
 const cases: BenchmarkCase[] = [
   {
@@ -448,58 +449,62 @@ const cases: BenchmarkCase[] = [
 
 async function main(): Promise<void> {
   const started = performance.now();
-  await resetBenchmarkWorkspace();
-  const ctx: ToolContext = {
-    cwd: benchmarkRoot,
-    memoryDir: benchmarkMemoryDir,
-    readonly: false,
-    runId: "benchmark",
-    permissionMode: "default",
-    securityPolicy: defaultSecurityPolicy
-  };
+  const isolated = await createIsolatedBenchmarkWorkspace();
+  benchmarkRoot = isolated.path;
+  benchmarkMemoryDir = resolve(benchmarkRoot, ".agent-memory");
+  try {
+    await resetBenchmarkWorkspace();
+    const ctx: ToolContext = {
+      cwd: benchmarkRoot,
+      memoryDir: benchmarkMemoryDir,
+      readonly: false,
+      runId: "benchmark",
+      permissionMode: "default",
+      securityPolicy: defaultSecurityPolicy
+    };
 
-  const results: BenchmarkCaseResult[] = [];
-  for (const item of cases) {
-    const caseStarted = performance.now();
-    try {
-      await item.run(ctx);
-      results.push({
-        id: item.id,
-        description: item.description,
-        passed: true,
-        durationMs: elapsed(caseStarted)
-      });
-    } catch (error) {
-      results.push({
-        id: item.id,
-        description: item.description,
-        passed: false,
-        durationMs: elapsed(caseStarted),
-        error: (error as Error).message
-      });
+    const results: BenchmarkCaseResult[] = [];
+    for (const item of cases) {
+      const caseStarted = performance.now();
+      try {
+        await item.run(ctx);
+        results.push({
+          id: item.id,
+          description: item.description,
+          passed: true,
+          durationMs: elapsed(caseStarted)
+        });
+      } catch (error) {
+        results.push({
+          id: item.id,
+          description: item.description,
+          passed: false,
+          durationMs: elapsed(caseStarted),
+          error: (error as Error).message
+        });
+      }
     }
-  }
 
-  const passed = results.filter((item) => item.passed).length;
-  const report: BenchmarkReport = {
-    timestamp: new Date().toISOString(),
-    workspace: benchmarkRoot,
-    total: results.length,
-    passed,
-    failed: results.length - passed,
-    durationMs: elapsed(started),
-    results
-  };
+    const passed = results.filter((item) => item.passed).length;
+    const report: BenchmarkReport = {
+      timestamp: new Date().toISOString(),
+      workspace: "isolated temporary workspace",
+      total: results.length,
+      passed,
+      failed: results.length - passed,
+      durationMs: elapsed(started),
+      results
+    };
 
-  await writeReport(report);
-  printReport(report);
-  if (report.failed > 0) {
-    process.exitCode = 1;
+    await writeReport(report);
+    printReport(report);
+    if (report.failed > 0) process.exitCode = 1;
+  } finally {
+    await isolated.cleanup();
   }
 }
 
 async function resetBenchmarkWorkspace(): Promise<void> {
-  await rm(benchmarkRoot, { recursive: true, force: true });
   await mkdir(benchmarkRoot, { recursive: true });
   await writeText(resolve(benchmarkRoot, ".gitignore"), ".agent-memory/\n");
   await runCommand("git", ["init"], benchmarkRoot);

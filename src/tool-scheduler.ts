@@ -9,6 +9,15 @@ export async function runRegisteredTool(
   input: unknown,
   ctx: ToolContext
 ): Promise<ToolResult> {
+  if (ctx.signal?.aborted) {
+    return toolFailure({
+      content: `Tool ${toolName} was cancelled before execution began.`,
+      errorCode: "TOOL_CANCELLED_BEFORE_START",
+      retryable: false,
+      metadata: { toolName, cancelledBeforeSideEffect: true }
+    });
+  }
+
   const tool = tools.find((item) => item.name === toolName);
   if (!tool) {
     const names = tools.map((item) => item.name).join(", ");

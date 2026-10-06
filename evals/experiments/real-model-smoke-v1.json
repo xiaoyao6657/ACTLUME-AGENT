@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "r7-provider-tools-usage-smoke-v1",
+  "createdAt": "2026-10-06",
+  "dataClass": "real-model-smoke-only",
+  "qualityClaim": false,
+  "task": {
+    "id": "short-regression-01",
+    "fixture": "evals/fixtures/short-regression-01/task.json",
+    "fixtureHash": "sha256:825227494829df94590ea87ffe65dd4838ce4347b995beca6d9b32d149800ba0",
+    "oracle": "evals/oracles/short-regression-01.mjs",
+    "oracleId": "short-regression-01-hidden-v1",
+    "oracleHash": "sha256:49a06067ecc1fd295475288511c0740a878a948ef552b103f27b97b678650763"
+  },
+  "candidate": {
+    "head": "256e476ef5bdd624526c1ea306c755fd4ad354e7",
+    "worktreeSnapshotHash": "sha256:5e05426ef19a385b8d2d99e39734fcc225f150864067b5d274246dae2a5b4113"
+  },
+  "provider": {
+    "id": "https://api.deepseek.com",
+    "modelId": "deepseek-v4-pro",
+    "modelRevision": "unknown",
+    "sampling": { "temperature": null, "topP": null, "seed": "unknown" }
+  },
+  "condition": {
+    "id": "actlume-full",
+    "classification": "retrospective-effective-treatment",
+    "previousRecordLabel": "actlume-guardrails-enforced",
+    "memoryTreatment": "enabled-by-runtime-default-before-explicit-Eval-toggle",
+    "policyRules": {
+      "actlume.workflow.efficiency": "enforce",
+      "actlume.task.scope-precheck": "enforce"
+    },
+    "permissionMode": "acceptEdits",
+    "mcp": "isolated-empty-config"
+  },
+  "executionOrder": [
+    { "taskId": "short-regression-01", "condition": "actlume-full", "repeatIndex": 0 }
+  ],
+  "limits": {
+    "maxAttempts": 1,
+    "maxUpstreamRequests": 8,
+    "maxOutputTokensPerRequest": 512,
+    "maxReportedTokens": 20000,
+    "maxDurationMs": 120000,
+    "tokenLimitBehavior": "After each completed response, stop forwarding new provider calls once reported cumulative usage reaches the limit. One in-flight response can exceed the threshold; the observed run ended at 20101 tokens."
+  },
+  "run": {
+    "report": ".agent-benchmark/real-model-smoke/short-regression-01-0b41f633-cf8c-481b-b7fe-c6ad8a618f56/report.json",
+    "runtimeEvents": ".agent-benchmark/real-model-smoke/short-regression-01-0b41f633-cf8c-481b-b7fe-c6ad8a618f56/memory/events/4d752a1a-0953-43ee-a4dd-562e231d0ab2.jsonl",
+    "patch": ".agent-benchmark/real-model-smoke/short-regression-01-0b41f633-cf8c-481b-b7fe-c6ad8a618f56/patch.diff",
+    "providerRequests": 4,
+    "usageKnownRequests": 4,
+    "inputTokens": 19506,
+    "outputTokens": 595,
+    "totalTokens": 20101,
+    "toolCallsRequested": 6,
+    "toolCallsExecuted": 5,
+    "toolCallsBlocked": 1,
+    "runtimeStatus": "failed",
+    "oracleVerdict": "fail",
+    "oracleReason": "oracle execution failed: invalid field"
+  },
+  "limitations": [
+    "This is a single smoke attempt, not a paired or repeated strategy experiment.",
+    "Memory recall/context and memory tools were enabled by runtime default; the old condition label omitted this factor, so retrospectively classify the effective treatment as actlume-full.",
+    "Provider model revision and sampling settings are unknown, so paired comparison is invalid.",
+    "The task ended before changing parser.js; the oracle failure is an observed failed attempt, not evidence that the guardrail caused the failure.",
+    "The temporary task workspace had no required CheckSpec; runtime evidence was unchecked and the independent oracle supplies the separate fail verdict.",
+    "No provider price was recorded; token usage is not converted into a cost estimate."
+  ]
+}

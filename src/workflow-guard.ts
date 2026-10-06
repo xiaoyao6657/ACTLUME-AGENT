@@ -17,7 +17,7 @@ export { extractShellCommand, requiresEditPlan };
 // ── tool name sets ──────────────────────────────────────────────────
 
 export function explorationToolNames(): Set<string> {
-  return new Set(["projectScan", "tree", "listDir", "searchText", "readFile", "readTail", "fileExists", "recall"]);
+  return new Set(["projectScan", "tree", "listDir", "searchText", "readFile", "readTail", "fileExists", "recall", "memoryList", "memoryRecall", "readArtifact", "scopedResearch"]);
 }
 
 export function broadExplorationTools(): Set<string> {
@@ -112,18 +112,19 @@ export function formatAllowedIntentsForPrompt(intents: ActionIntent[]): string {
   return intents.map((i) => d[i]).join("; ");
 }
 
-export function workflowProfileForTask(userTask: string, maxSteps: number): WorkflowProfile {
+export function workflowProfileForTask(userTask: string, maxSteps: number, options: { taskSpecificEnabled?: boolean } = {}): WorkflowProfile {
+  const taskSpecificEnabled = options.taskSpecificEnabled !== false;
   if (isIssueFixTask(userTask)) {
     return {
       kind: "issue-fix",
-      explorationBudget: taskRequestsEditPlanFirst(userTask) ? 7 : 5,
+      explorationBudget: taskSpecificEnabled && taskRequestsEditPlanFirst(userTask) ? 7 : 5,
       postEditExplorationBudget: 2,
       targetMissLimit: 2
     };
   }
   return {
     kind: "generic",
-    explorationBudget: taskRequestsEditPlanFirst(userTask) ? 6 : Math.min(6, Math.max(4, Math.ceil(maxSteps * 0.12))),
+    explorationBudget: taskSpecificEnabled && taskRequestsEditPlanFirst(userTask) ? 6 : Math.min(6, Math.max(4, Math.ceil(maxSteps * 0.12))),
     postEditExplorationBudget: 4,
     targetMissLimit: 3
   };
@@ -149,9 +150,11 @@ export function navigateWorkflow(
   workflow: Pick<EditWorkflowState, "plan" | "changedFiles" | "checks">,
   history: AgentHistoryItem[] = [],
   step = 1,
-  maxSteps = 10
+  maxSteps = 10,
+  options: { taskSpecificEnabled?: boolean } = {}
 ): WorkflowNavigation {
-  const profile = workflowProfileForTask(userTask, maxSteps);
+  const taskSpecificEnabled = options.taskSpecificEnabled !== false;
+  const profile = workflowProfileForTask(userTask, maxSteps, { taskSpecificEnabled });
   const eb = profile.explorationBudget;
   const aeb = profile.postEditExplorationBudget;
   const repeated = countConsecutiveExplorationTurns(history, explorationToolNames());
@@ -162,7 +165,7 @@ export function navigateWorkflow(
   }
 
   if (!workflow.plan) {
-    if (taskRequestsEditPlanFirst(userTask)) {
+    if (taskSpecificEnabled && taskRequestsEditPlanFirst(userTask)) {
       reasons.push("editPlan explicitly requested first.");
       return { stage: "plan", recommendedAction: "Call editPlan now.", blockedActions: ["readFile", "searchText", "projectScan", "tree", "listDir", "shell", "final"], reasons, explorationBudget: eb, postEditExplorationBudget: aeb, repeatedExploration: repeated };
     }
@@ -211,9 +214,13 @@ export function maybeBlockByStageBudget(
   step: number,
   maxSteps: number,
   workflow: EditWorkflowState,
-  history: AgentHistoryItem[] = []
+  history: AgentHistoryItem[] = [],
+  policies: { efficiencyEnabled?: boolean; taskSpecificEnabled?: boolean } = {}
 ): ToolResult | undefined {
+  const efficiencyEnabled = policies.efficiencyEnabled !== false;
+  const taskSpecificEnabled = policies.taskSpecificEnabled !== false;
   if (!isCodingChangeTask(userTask)) {
+    if (!efficiencyEnabled) return undefined;
     const tools = new Set([...explorationToolNames(), "shell"]);
     const isMcp = action.tool.startsWith("mcp_");
     const consecutive = countConsecutiveExplorationTurns(history, tools);
@@ -238,11 +245,11 @@ export function maybeBlockByStageBudget(
     return undefined;
   }
 
-  const navigation = navigateWorkflow(userTask, workflow, history, step, maxSteps);
+  const navigation = navigateWorkflow(userTask, workflow, history, step, maxSteps, { taskSpecificEnabled });
   const actionIntent = classifyActionIntent(action);
   const editFailureRecovery = detectEditFailureRecoveryInspection(action, history);
 
-  if (taskRequestsEditPlanFirst(userTask) && !workflow.plan && action.tool !== "editPlan") {
+  if (taskSpecificEnabled && taskRequestsEditPlanFirst(userTask) && !workflow.plan && action.tool !== "editPlan") {
     return toolFailure({
       content: "editPlan must be called first. Call editPlan now before any inspection or edits.",
       errorCode: "EDIT_PLAN_REQUIRED_FIRST", retryable: true,
@@ -354,7 +361,7 @@ export function maybeBlockByStageBudget(
   const isBroadRead = action.tool === "readFile" && (!action.input || typeof action.input !== "object" ||
     (!("startLine" in action.input) && !("lineCount" in action.input) && !("offset" in action.input) && !("limit" in action.input)));
 
-  if (workflow.plan && workflow.changedFiles.length === 0 && step > eb && (broadTools.has(action.tool) || isBroadRead) && !editFailureRecovery) {
+  if (efficiencyEnabled && workflow.plan && workflow.changedFiles.length === 0 && step > eb && (broadTools.has(action.tool) || isBroadRead) && !editFailureRecovery) {
     return toolFailure({
       content: "Exploration budget exceeded. Use focused search/ranged read, or make the planned edit now.",
       errorCode: "EXPLORATION_BUDGET_EXCEEDED", retryable: true,
@@ -363,8 +370,8 @@ export function maybeBlockByStageBudget(
   }
 
   const repeatedExpl = countConsecutiveExplorationTurns(history, explorationToolNames());
-  if (workflow.plan && workflow.changedFiles.length === 0 && isIssueFixTask(userTask) &&
-    countFailedTargetLocationAttempts(history, userTask) >= (workflowProfileForTask(userTask, maxSteps).targetMissLimit) &&
+  if (taskSpecificEnabled && workflow.plan && workflow.changedFiles.length === 0 && isIssueFixTask(userTask) &&
+    countFailedTargetLocationAttempts(history, userTask) >= (workflowProfileForTask(userTask, maxSteps, { taskSpecificEnabled }).targetMissLimit) &&
     isExploration && !editFailureRecovery && !isTargetedLookup) {
     return toolFailure({
       content: "Issue target not located after repeated exact searches. Report missing symbols and recommend the user verify the checkout.",
@@ -373,7 +380,7 @@ export function maybeBlockByStageBudget(
     });
   }
 
-  if (workflow.plan && workflow.changedFiles.length === 0 && repeatedExpl >= eb && isExploration && !editFailureRecovery && !isTargetedLookup) {
+  if (efficiencyEnabled && workflow.plan && workflow.changedFiles.length === 0 && repeatedExpl >= eb && isExploration && !editFailureRecovery && !isTargetedLookup) {
     return toolFailure({
       content: "Repeated exploration blocked before any edits. Make the real planned edit now using line numbers/anchors from history.",
       errorCode: "REPEATED_EXPLORATION_BLOCKED", retryable: true,
@@ -381,7 +388,7 @@ export function maybeBlockByStageBudget(
     });
   }
 
-  if (workflow.plan && workflow.changedFiles.length === 0 && step > eb + 2 && isExploration && !editFailureRecovery && !isTargetedLookup) {
+  if (efficiencyEnabled && workflow.plan && workflow.changedFiles.length === 0 && step > eb + 2 && isExploration && !editFailureRecovery && !isTargetedLookup) {
     return toolFailure({
       content: "Pre-edit inspection window closed. Make the first real edit now.",
       errorCode: "PRE_EDIT_EXPLORATION_WINDOW_CLOSED", retryable: true,
@@ -389,7 +396,7 @@ export function maybeBlockByStageBudget(
     });
   }
 
-  if (workflow.changedFiles.length > 0 && workflow.checks.length === 0 && repeatedExpl >= navigation.postEditExplorationBudget && isExploration) {
+  if (efficiencyEnabled && workflow.changedFiles.length > 0 && workflow.checks.length === 0 && repeatedExpl >= navigation.postEditExplorationBudget && isExploration) {
     return toolFailure({
       content: `${navigation.recommendedAction} Do not keep rereading the same regions.`,
       errorCode: "POST_EDIT_EXPLORATION_BLOCKED", retryable: true,
@@ -397,7 +404,7 @@ export function maybeBlockByStageBudget(
     });
   }
 
-  if (workflow.changedFiles.length > 0 && workflow.checks.length === 0 && step >= editBudget && broadTools.has(action.tool)) {
+  if (efficiencyEnabled && workflow.changedFiles.length > 0 && workflow.checks.length === 0 && step >= editBudget && broadTools.has(action.tool)) {
     return toolFailure({
       content: "Verification phase after edits. Run a check, repair, or finish.",
       errorCode: "VERIFICATION_PHASE_REQUIRED", retryable: true,
@@ -406,7 +413,7 @@ export function maybeBlockByStageBudget(
   }
 
   const policy = workflowPolicyForNavigation(navigation);
-  if (!policy.allowedIntents.includes(actionIntent) && !isTargetedLookup && !editFailureRecovery) {
+  if (efficiencyEnabled && !policy.allowedIntents.includes(actionIntent) && !isTargetedLookup && !editFailureRecovery) {
     const recentBlocks = countRecentWorkflowGuardBlocks(history, "STAGE_INTENT_BLOCKED");
     return toolFailure({
       content:

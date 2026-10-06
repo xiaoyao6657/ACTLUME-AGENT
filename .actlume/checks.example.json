@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "checks": [
+    {
+      "id": "unit-and-runtime-tests",
+      "command": "npm test",
+      "cwd": ".",
+      "kind": "test",
+      "required": true,
+      "scopePaths": ["src", "scripts"],
+      "requiredFiles": ["package.json", "package-lock.json"],
+      "environmentFiles": ["package.json", "package-lock.json", "tsconfig.json"],
+      "environmentKeys": ["NODE_ENV"]
+    },
+    {
+      "id": "typescript-typecheck",
+      "command": "npm run typecheck",
+      "cwd": ".",
+      "kind": "typecheck",
+      "required": true,
+      "scopePaths": ["src", "scripts"],
+      "requiredFiles": ["package.json", "tsconfig.json"],
+      "environmentFiles": ["package.json", "package-lock.json", "tsconfig.json"],
+      "environmentKeys": ["NODE_ENV"]
+    }
+  ]
+}

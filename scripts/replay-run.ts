@@ -20,7 +20,7 @@ type RunLogEvent = {
 type ReplayStep = {
   step: number;
   tool: string;
-  simulatedResult: "ok" | "blocked" | "failed";
+  simulatedResult: "ok" | "blocked" | "failed" | "unknown";
   errorCode?: string;
   note?: string;
 };
@@ -112,7 +112,7 @@ for (const event of events) {
   replaySteps.push({
     step,
     tool: action.tool,
-    simulatedResult: result.ok ? "ok" : blocked ? "blocked" : "failed",
+    simulatedResult: result.ok ? "ok" : blocked ? "blocked" : result.errorCode === "REPLAY_RESULT_UNKNOWN" ? "unknown" : "failed",
     errorCode: result.ok ? undefined : result.errorCode,
     note: summarize(result.content)
   });
@@ -136,7 +136,12 @@ function inferToolResultFromRecordedLog(logEvents: RunLogEvent[], step: number):
   if (toolResult && typeof toolResult === "object" && "ok" in toolResult) {
     return toolResult;
   }
-  return { ok: true, content: "Replay assumed success because no tool_result was found." };
+  return {
+    ok: false,
+    content: "Recorded tool result is missing; replay cannot determine whether the action succeeded.",
+    errorCode: "REPLAY_RESULT_UNKNOWN",
+    retryable: false
+  };
 }
 
 function applyWorkflowEffect(workflow: EditWorkflowState, action: AgentActionOutput, result: ToolResult): void {
@@ -203,6 +208,10 @@ function looksLikeVerification(command: string): boolean {
 }
 
 function formatReplayObservation(result: ToolResult): string {
+  if (!result.ok && result.errorCode === "REPLAY_RESULT_UNKNOWN") {
+    return `[unknown]
+${result.content}`;
+  }
   if (result.ok) {
     return result.content;
   }

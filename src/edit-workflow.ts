@@ -4,6 +4,7 @@ import type { AgentActionOutput, ToolResult } from "./types.js";
 
 export type EditPlan = {
   summary: string;
+  content?: string;
   expectedFiles: string[];
   steps: string[];
   createdAt: string;

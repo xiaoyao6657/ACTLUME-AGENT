@@ -35,3 +35,24 @@ test("builds workspace prompt context from instructions and rules", async () => 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("workspace prompt can omit legacy skill and sub-agent declarations for runtimes without those tools", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "actlume-prompt-pi-"));
+  try {
+    await mkdir(join(cwd, ".actlume", "skills", "legacy-check"), { recursive: true });
+    await writeFile(join(cwd, ".actlume", "skills", "legacy-check", "SKILL.md"), [
+      "---",
+      "name: legacy-check",
+      "description: A legacy-only skill",
+      "user-invocable: true",
+      "---",
+      "Do legacy skill work."
+    ].join("\n"), "utf8");
+
+    const context = buildWorkspacePromptContext(cwd, { includeSkills: false, includeSubAgents: false });
+    assert.doesNotMatch(context, /Available Skills/);
+    assert.doesNotMatch(context, /Sub-Agents/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { normalizePermissionMode, parseBoolean } from "./security.js";
 import type { PermissionMode } from "./types.js";
+import { loadPolicyConfig, type PolicyConfig } from "./policy-config.js";
 
 export type CliConfigOverrides = {
   workspace?: string;
@@ -28,6 +29,11 @@ export type AppConfig = {
   mcpConfigPath?: string;
   permissionMode: PermissionMode;
   streaming: boolean;
+  policyConfig?: PolicyConfig;
+  /** Internal evaluation control. Omitted means the normal, memory-enabled runtime. */
+  memoryEnabled?: boolean;
+  /** Internal Eval opt-in: headless runs may execute only an exact configured CheckSpec command. */
+  allowHeadlessCheckSpec?: boolean;
   sources: {
     userConfigPath: string;
     projectConfigPath: string;
@@ -126,6 +132,7 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
   const memoryDir = resolveMemoryDir(workspace, merged.memoryDir ?? defaults.memoryDir);
   const mcpConfigPath = merged.mcpConfigPath ? resolvePath(workspace, merged.mcpConfigPath) : undefined;
   const permissionMode = merged.permissionMode ?? (merged.yes ? "bypassPermissions" : defaults.permissionMode);
+  const policyConfig = await loadPolicyConfig(workspace);
 
   return {
     workspace,
@@ -139,6 +146,7 @@ export async function loadAppConfig(overrides: CliConfigOverrides, cwd = process
     mcpConfigPath,
     permissionMode,
     streaming: merged.streaming ?? defaults.streaming,
+    policyConfig,
     sources: {
       userConfigPath,
       projectConfigPath,

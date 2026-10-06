@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../types.js";
 import { agentTool } from "./agent.js";
+import { readArtifactTool } from "./artifact.js";
 import { editPlanTool } from "./edit-plan.js";
 import { globTool, listDirTool, searchTextTool, treeTool } from "./explore.js";
 import { memoryListTool, memoryRecallTool, memorySaveTool } from "./memory.js";
@@ -55,7 +56,8 @@ export const tools: ToolDefinition[] = [
   recallTool,
   taskListTool,
   taskAddTool,
-  taskUpdateTool
+  taskUpdateTool,
+  readArtifactTool
 ].map((tool) => ({ ...tool, source: "local" }));
 
 export function getToolDescriptions(availableTools: ToolDefinition[] = tools): string {

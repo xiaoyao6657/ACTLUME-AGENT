@@ -19,6 +19,10 @@ export type ToolContext = {
   memoryDir: string;
   readonly: boolean;
   runId: string;
+  taskId?: string;
+  sessionId?: string;
+  branchId?: string;
+  signal?: AbortSignal;
   permissionMode: PermissionMode;
   securityPolicy: SecurityPolicy;
 };
@@ -83,7 +87,9 @@ export type AgentHistoryItem = {
 export type ShellResult = {
   stdout: string;
   stderr: string;
-  exitCode: number;
+  exitCode: number | null;
+  outcome?: "completed" | "failed" | "cancelled" | "timed_out" | "start_failed" | "unknown";
+  terminationConfirmed?: boolean;
 };
 
 export type SearchResult = {

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "holdout-stale-config-01",
+  "category": "memory-transfer",
+  "prompt": "Learning phase: inspect artifact.json and run npm test to verify the current output. Save the verified artifact target and test command as candidate project memory named exactly 'Verified artifact target', with artifact.json source provenance. Before a fresh follow-up, artifact.json changes from release-v1 to release-v2. In the fresh session, read the current target, update dist/release.txt accordingly, and run npm test; do not rely on obsolete remembered values.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    "artifact.json": "{\"target\":\"release-v1\",\"output\":\"dist/release.txt\"}\n",
+    "dist/release.txt": "release-v1\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nconst config = JSON.parse(await readFile('artifact.json', 'utf8'));\nassert.equal((await readFile(config.output, 'utf8')).trim(), config.target);\n",
+    ".actlume/checks.json": "{\"schemaVersion\":1,\"checks\":[{\"id\":\"holdout-artifact-test\",\"command\":\"npm test\",\"cwd\":\".\",\"kind\":\"test\",\"required\":true,\"scopePaths\":[\"dist/release.txt\"],\"requiredFiles\":[\"artifact.json\",\"test.mjs\"],\"environmentFiles\":[\"artifact.json\",\"test.mjs\"],\"environmentKeys\":[]}]}\n"
+  },
+  "requiredFiles": ["artifact.json", "dist/release.txt", "test.mjs", ".actlume/checks.json"],
+  "oracleId": "holdout-stale-config-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Read artifact.json, run npm test, then save the verified output target and exact test command as candidate project memory named exactly 'Verified artifact target'. Include artifact.json sourceRefs and applicabilityPaths.",
+        "sessionKey": "learning",
+        "transitionAfter": {
+          "kind": "verify-and-promote-memory",
+          "memoryName": "Verified artifact target",
+          "command": "npm test",
+          "updateFiles": { "artifact.json": "{\"target\":\"release-v2\",\"output\":\"dist/release.txt\"}\n" }
+        }
+      },
+      {
+        "prompt": "Fresh-session follow-up: read the current artifact.json and update dist/release.txt to match its current target, then run npm test. Treat remembered values as stale if the source file changed.",
+        "sessionKey": "follow-up"
+      }
+    ]
+  }
+}

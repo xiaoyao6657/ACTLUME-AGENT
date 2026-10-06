@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "requirement-revision-01",
+  "category": "requirement-change",
+  "prompt": "Initial requirement: normalize labels to lowercase. Before the task is closed, the user will add a conflicting compatibility requirement: records with kind LEGACY must preserve the original label casing, while all other records remain lowercase. Apply the revised requirement.",
+  "files": {
+    "package.json": "{\"type\":\"module\"}\n",
+    "src/labels.js": "export function normalizeLabel(record) {\n  return record.label;\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { normalizeLabel } from './src/labels.js';\nassert.equal(normalizeLabel({ kind: 'LEGACY', label: 'OldCase' }), 'OldCase');\nassert.equal(normalizeLabel({ kind: 'CURRENT', label: 'NewCase' }), 'newcase');\n"
+  },
+  "requiredFiles": ["src/labels.js", "test.mjs"],
+  "oracleId": "requirement-revision-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "phases": [
+      {
+        "prompt": "Initial requirement for this task: normalize every label to lowercase. Implement this behavior in src/labels.js.",
+        "sessionKey": "same-task",
+        "actions": [
+          { "toolName": "editPlan", "input": { "summary": "Normalize labels to lowercase", "expectedFiles": ["src/labels.js"], "steps": ["Apply the initial narrow normalization requirement"] } },
+          { "toolName": "writeFile", "input": { "path": "src/labels.js", "content": "export function normalizeLabel(record) {\n  return record.label.toLowerCase();\n}\n" } }
+        ],
+        "finalText": "Implemented the initial lowercase label requirement."
+      },
+      {
+        "prompt": "Requirement revision for the same task: preserve the original label casing when kind is LEGACY, while continuing to lowercase every other kind. The earlier requirement conflicts with this compatibility rule; update the current implementation and retest.",
+        "sessionKey": "same-task",
+        "actions": [
+          { "toolName": "readFile", "input": { "path": "src/labels.js" } },
+          { "toolName": "writeFile", "input": { "path": "src/labels.js", "content": "export function normalizeLabel(record) {\n  return record.kind === 'LEGACY' ? record.label : record.label.toLowerCase();\n}\n" } }
+        ],
+        "finalText": "Updated the same task to satisfy revision two and preserve LEGACY label casing."
+      }
+    ]
+  }
+}

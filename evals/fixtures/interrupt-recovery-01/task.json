@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "interrupt-recovery-01",
+  "category": "interruption-recovery",
+  "prompt": "Implement the requested parser change, then continue from a checkpoint after the runtime is forcibly terminated immediately after the edit and before verification. Resume the same task/session, inspect pending side effects, and run the hidden regression check without repeating the edit.",
+  "files": {
+    "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+    ".actlume/checks.json": "{\"schemaVersion\":1,\"checks\":[{\"id\":\"parser-test\",\"command\":\"npm test\",\"cwd\":\".\",\"kind\":\"test\",\"required\":true,\"scopePaths\":[\"src/parser.js\",\"test.mjs\"],\"requiredFiles\":[\"package.json\",\"test.mjs\"],\"environmentFiles\":[\"package.json\"],\"environmentKeys\":[]}]}\n",
+    "src/parser.js": "export function parseField(input) {\n  const match = /^([^:]+):(.+)$/.exec(input);\n  if (!match) throw new Error('invalid field');\n  return { key: match[1], value: match[2] };\n}\n",
+    "test.mjs": "import assert from 'node:assert/strict';\nimport { parseField } from './src/parser.js';\nassert.deepEqual(parseField('title:'), { key: 'title', value: '' });\nassert.throws(() => parseField(':x'));\n"
+  },
+  "requiredFiles": ["src/parser.js", "test.mjs", ".actlume/checks.json"],
+  "oracleId": "interrupt-recovery-01-hidden-v1",
+  "protocol": {
+    "permissionMode": "bypassPermissions",
+    "interruption": { "checkpointPath": "src/parser.js", "checkpointContains": "([^:]*)", "checkToolName": "writeFile" },
+    "phases": [
+      {
+        "prompt": "Begin the requested parser fix. Make the plan and edit src/parser.js. The harness will terminate this runtime process immediately after the write completes, before any verification. Do not run checks in this phase.",
+        "sessionKey": "main",
+        "actions": [
+          { "toolName": "editPlan", "input": { "summary": "Accept empty optional parser values", "expectedFiles": ["src/parser.js"], "steps": ["Allow an empty value while retaining separator validation"] } },
+          { "toolName": "writeFile", "input": { "path": "src/parser.js", "content": "export function parseField(input) {\n  const match = /^([^:]+):([^:]*)$/.exec(input);\n  if (!match) throw new Error('invalid field');\n  return { key: match[1], value: match[2] };\n}\n" } }
+        ],
+        "finalText": "The edit is ready; verification remains pending.",
+        "holdAfterActions": true
+      },
+      {
+        "prompt": "Resume this same task after process termination. Inspect its current state without repeating the edit, then run the configured test command and report the result.",
+        "sessionKey": "main",
+        "actions": [
+          { "toolName": "shell", "input": { "command": "npm test" } }
+        ],
+        "finalText": "Resumed the existing change without repeating it. npm test passed."
+      }
+    ]
+  }
+}

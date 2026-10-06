@@ -9,14 +9,17 @@ import { describeSubAgents } from "./subagent.js";
 const includeRegex = /^@(\.\/[^\s]+|~\/[^\s]+|\/[^\s]+)$/gm;
 const maxIncludeDepth = 5;
 
-export function buildWorkspacePromptContext(cwd: string): string {
+export function buildWorkspacePromptContext(
+  cwd: string,
+  options: { includeSkills?: boolean; includeSubAgents?: boolean } = {}
+): string {
   const sections = [
     buildEnvironmentSection(cwd),
     getGitContext(cwd),
     loadWorkspaceInstructions(cwd),
     loadRules(cwd),
-    buildSkillDescriptions(cwd),
-    describeSubAgents()
+    options.includeSkills === false ? "" : buildSkillDescriptions(cwd),
+    options.includeSubAgents === false ? "" : describeSubAgents()
   ].filter(Boolean);
 
   return sections.length > 0 ? `Workspace prompt context:\n${sections.join("\n\n")}` : "";
